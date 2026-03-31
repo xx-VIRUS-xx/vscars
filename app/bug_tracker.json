@@ -1,0 +1,66 @@
+{
+    "bugs": [
+        {
+            "id": 1,
+            "title": "State Carryover Bug",
+            "description": "Previous request gets executed again when user sends a new/different request. Form data from prior tool execution persists and leaks into the next tool execution.",
+            "status": "fixed",
+            "severity": "critical",
+            "occurrences": 3,
+            "first_reported": "2026-03-14",
+            "last_reported": "2026-03-15",
+            "fix_details": "Capture all form values BEFORE async call, clear form immediately, prevent stale dataset.tool from persisting. Close modal after execution.",
+            "root_cause": "formElement.reset() was called AFTER async response returned. If user opened a new tool modal during the wait, the reset would wipe the NEW tool's inputs, and dataset.tool would still point to old tool name."
+        },
+        {
+            "id": 2,
+            "title": "Token Expiration Error",
+            "description": "User gets 'token expired' error after 30 minutes of inactivity, losing their session.",
+            "status": "fixed",
+            "severity": "high",
+            "occurrences": 2,
+            "first_reported": "2026-03-14",
+            "last_reported": "2026-03-15",
+            "fix_details": "Extended ACCESS_TOKEN_EXPIRE_MINUTES from 30 to 1440 (24 hours). Added 401 detection in frontend with graceful logout message.",
+            "root_cause": "JWT token lifetime was only 30 minutes. No frontend handling for 401 responses."
+        },
+        {
+            "id": 3,
+            "title": "Copilot Response Not Captured",
+            "description": "Ask Copilot output doesn't appear in the app. AppleScript can send queries but cannot capture the actual response from VS Code Copilot Chat. Cmd+A/Cmd+C selects editor content, not Copilot Chat text.",
+            "status": "fixed",
+            "severity": "high",
+            "occurrences": 3,
+            "first_reported": "2026-03-14",
+            "last_reported": "2026-03-15",
+            "fix_details": "v4 FINAL: Replaced AppleScript entirely. Now uses GitHub Models API (direct HTTP calls to AI with user's paid Copilot subscription). Instant responses, no clipboard/capture needed.",
+            "root_cause": "AppleScript Cmd+A/Cmd+C captured editor content, not Copilot Chat panel. VS Code Electron UI doesn't expose chat text to accessibility APIs. Solution: bypass VS Code entirely, call AI directly via API."
+        },
+        {
+            "id": 4,
+            "title": "SyntaxError in tools.py",
+            "description": "Server fails to start with SyntaxError due to malformed f-strings with escaped quotes inside triple-quoted strings.",
+            "status": "fixed",
+            "severity": "critical",
+            "occurrences": 1,
+            "first_reported": "2026-03-15",
+            "last_reported": "2026-03-15",
+            "fix_details": "Regenerated tools.py with proper string concatenation instead of broken f-strings.",
+            "root_cause": "Python f-strings with escaped quotes (backslash-quote) inside triple-quoted strings cause SyntaxError."
+        },
+        {
+            "id": 5,
+            "title": "File Browser Bug",
+            "description": "Doesn\u2019t open a file says not found, and folder doesn\u2019t open says not found",
+            "status": "fixed",
+            "severity": "medium",
+            "occurrences": 1,
+            "first_reported": "2026-03-15",
+            "last_reported": "2026-03-15",
+            "fix_details": "browsePath() was using raw emoji-prefixed strings (📁 name/, 📄 name (1KB)) as filenames in paths. Fixed: parse list_files output properly, strip emojis/size info, detect dirs by trailing /. Folders now navigate into them. Files read content directly. Added parent directory (..) navigation.",
+            "root_cause": "list_files returns formatted lines like '📁 Documents/' and '📄 config.py  (1.7KB)'. browsePath() was using these raw strings as path components, creating paths like '/Users/xxvirusxx/📁 Documents/' which don't exist.",
+            "reported_by": "Virus"
+        }
+    ],
+    "next_id": 6
+}

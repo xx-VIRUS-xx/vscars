@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="VSCARS">
+<meta id="meta-theme" name="theme-color" content="#000000">
+<meta name="description" content="VS Code As a Remote Service — control your dev machine from your phone.">
+<title>VSCARS</title>
+<link rel="stylesheet" href="/static/style.css?v=14.9">
+</head>
+<body>
+<canvas id="vscars-canvas"></canvas>
+<div id="app">
+
+<div id="toast-container" class="toast-container"></div>
+<div id="loading-overlay" class="loading-overlay" style="display:none">
+  <div class="loading-card">
+    <div class="loading-logo">VS</div>
+    <div class="loading-dots">
+      <span></span><span></span><span></span>
+    </div>
+    <p id="loading-text" class="loading-label">Loading…</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     AUTH
+     ═══════════════════════════════════════ -->
+<div id="auth-container" class="auth-screen">
+<div class="auth-card">
+
+  <div class="auth-brand">
+    <div class="brand-mark">VS</div>
+    <h1>VSCARS</h1>
+    <p>VS Code As a Remote Service</p>
+  </div>
+
+  <!-- Forgot password (hidden by default) -->
+  <div id="forgot-tab" class="tab-content">
+    <p class="muted sm" style="margin-bottom:12px">Enter your email and we'll send a reset link.</p>
+    <input type="email" id="forgot-email" placeholder="your@email.com">
+    <button onclick="sendForgotPassword()" class="btn-primary">Send Reset Link</button>
+    <p class="sm" id="forgot-status" style="margin-top:8px;color:var(--t2)"></p>
+    <p style="margin-top:12px;text-align:center">
+      <a href="#" onclick="showLogin(event)" class="auth-link">← Back to sign in</a>
+    </p>
+  </div>
+
+  <div class="auth-tabs">
+    <button class="tab-btn active" data-tab="login" onclick="switchTab('login')">Sign In</button>
+    <button class="tab-btn" data-tab="register" onclick="switchTab('register')">Register</button>
+  </div>
+
+  <div id="login-tab" class="tab-content active">
+    <input type="text"     id="login-username" placeholder="Username"  autocomplete="username">
+    <input type="password" id="login-password" placeholder="Password"  autocomplete="current-password">
+    <button onclick="login()" class="btn-primary">Sign In</button>
+    <p class="forgot-link"><a href="#" onclick="showForgotPassword(event)" style="color:var(--t2)">Forgot password?</a></p>
+    <p class="error-msg" id="login-error"></p>
+  </div>
+
+  <div id="register-tab" class="tab-content">
+    <input type="text"     id="register-username" placeholder="Username"         autocomplete="username">
+    <input type="email"    id="register-email"    placeholder="Email"             autocomplete="email">
+    <input type="password" id="register-password" placeholder="Password"         autocomplete="new-password">
+    <input type="password" id="register-confirm"  placeholder="Confirm password" autocomplete="new-password">
+    <button onclick="register()" class="btn-primary">Create Account</button>
+    <p class="error-msg" id="register-error"></p>
+  </div>
+
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     APP SHELL
+     ═══════════════════════════════════════ -->
+<div id="main-container" class="shell" style="display:none">
+<div class="shell-body">
+
+  <!-- Activity bar -->
+  <nav class="actbar">
+    <div class="actbar-logo">VS</div>
+
+    <button class="nav-item active" data-view="dashboard" title="Home"
+      style="font-size:17px">⌘</button>
+    <button class="nav-item" data-view="ideas"         title="Ideas"
+      style="font-size:14px;font-weight:700;letter-spacing:-1px">◈</button>
+    <button class="nav-item" data-view="git"           title="Git"
+      style="font-family:var(--mono);font-size:13px;font-weight:700">⑂</button>
+    <button class="nav-item" data-view="tools"         title="Terminal"
+      style="font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:-1px">$_</button>
+    <button class="nav-item" data-view="workflows"     title="Workflows"
+      style="font-size:15px">⬡</button>
+    <button class="nav-item" data-view="file-browser"  title="Files"
+      style="font-size:15px">⊞</button>
+    <button class="nav-item" data-view="conversations" title="Chat"
+      style="font-size:14px">⊘</button>
+    <button class="nav-item" data-view="activity"      title="Logs"
+      style="font-family:var(--mono);font-size:12px;font-weight:700">≣</button>
+
+    <div class="actbar-spacer"></div>
+    <div class="actbar-divider"></div>
+
+    <button class="nav-item" data-view="settings" title="Settings"
+      style="font-size:15px">⊛</button>
+    <button class="nav-item" data-view="billing"  title="Plan"
+      style="font-size:14px">◬</button>
+    <button class="nav-item" id="admin-nav" data-view="admin" title="Admin"
+      style="font-size:14px">⊕</button>
+
+    <div class="actbar-user">
+      <div class="actbar-avatar" id="actbar-avatar" title="Signed in">?</div>
+      <button class="actbar-logout" onclick="logout()" title="Sign out">⏻</button>
+    </div>
+  </nav>
+
+  <!-- Main panel -->
+  <div class="panel">
+
+    <!-- Tab bar -->
+    <div class="tabbar">
+      <div class="tbtab active" id="active-tab-label">Home</div>
+      <div class="tabbar-right">
+        <span id="user-name"></span>
+        <span id="user-badge">User</span>
+        <span id="plan-badge" onclick="switchView('billing')" title="Your plan">Free</span>
+        <button onclick="toggleTheme()" id="theme-btn" title="Toggle theme">◐</button>
+      </div>
+    </div>
+
+    <!-- Views -->
+    <div class="views">
+
+      <!-- ─── DASHBOARD ─── -->
+      <div id="dashboard-view" class="view active">
+
+        <!-- Status strip -->
+        <div class="status-strip">
+          <span class="ss-item">
+            <span class="ss-dot ok" id="conn-dot"></span>
+            <span id="conn-label">Connected</span>
+          </span>
+          <span class="ss-sep"></span>
+          <span class="ss-item">⎇ <span class="ss-val" id="dash-branch">—</span></span>
+          <span class="ss-sep"></span>
+          <span class="ss-item">
+            <span id="hero-greeting">Hello</span>,
+            <span class="ss-val" id="hero-name"></span>
+          </span>
+          <span class="ss-clock" id="hero-clock">00:00</span>
+        </div>
+
+        <!-- Stat row -->
+        <div class="morning-brief" id="morning-brief">
+          <div class="stat-card brief-card">
+            <div class="brief-card-icon stat-icon">⚡</div>
+            <div class="stat-val brief-card-val" id="brief-commands">—</div>
+            <div class="stat-label brief-card-label">Commands today</div>
+          </div>
+          <div class="stat-card brief-card">
+            <div class="brief-card-icon stat-icon">✦</div>
+            <div class="stat-val brief-card-val" id="brief-ideas">—</div>
+            <div class="stat-label brief-card-label">Ideas pending</div>
+          </div>
+          <div class="stat-card brief-card">
+            <div class="brief-card-icon stat-icon">⟳</div>
+            <div class="stat-val brief-card-val" id="brief-workflows">—</div>
+            <div class="stat-label brief-card-label">Saved workflows</div>
+          </div>
+          <div class="stat-card brief-card">
+            <div class="brief-card-icon stat-icon">◇</div>
+            <div class="stat-val brief-card-val" id="brief-plan">—</div>
+            <div class="stat-label brief-card-label">Active plan</div>
+          </div>
+        </div>
+
+        <!-- 2-column layout -->
+        <div class="dash-grid">
+
+          <!-- Left: actions -->
+          <div>
+            <div class="action-grid">
+              <button onclick="switchView('ideas')" class="action-card accent">
+                <span class="ac-icon">✦</span>
+                <span class="ac-name">Capture Idea</span>
+                <span class="ac-sub">Idea Vault</span>
+              </button>
+              <button onclick="switchView('git')" class="action-card">
+                <span class="ac-icon">⎇</span>
+                <span class="ac-name">Git Panel</span>
+                <span class="ac-sub">Stage &amp; commit</span>
+              </button>
+              <button onclick="quickCopilotAgent()" class="action-card">
+                <span class="ac-icon">⬡</span>
+                <span class="ac-name">Copilot Agent</span>
+                <span class="ac-sub">Vibe to code</span>
+              </button>
+              <button onclick="quickRun()" class="action-card">
+                <span class="ac-icon">▶</span>
+                <span class="ac-name">Run Command</span>
+                <span class="ac-sub">Shell exec</span>
+              </button>
+              <button onclick="switchView('workflows')" class="action-card">
+                <span class="ac-icon">⟳</span>
+                <span class="ac-name">Workflows</span>
+                <span class="ac-sub">One-tap scripts</span>
+              </button>
+              <button onclick="quickChat()" class="action-card">
+                <span class="ac-icon">◎</span>
+                <span class="ac-name">AI Chat</span>
+                <span class="ac-sub">Ask anything</span>
+              </button>
+            </div>
+
+            <div id="ngrok-box" class="ngrok-bar" style="display:none;margin-top:10px">
+              <span class="ngrok-label">⬡ Public URL</span>
+              <input type="text" id="public-url" readonly class="ngrok-url">
+              <button onclick="copyToClipboard()" class="btn-sm">Copy</button>
+            </div>
+            <span id="ngrok-disabled" style="display:none"></span>
+          </div>
+
+          <!-- Right: aside -->
+          <div class="dash-aside">
+
+            <div class="aside-panel">
+              <div class="aside-panel-head">Permissions</div>
+              <div class="aside-panel-body">
+                <div id="permissions-display" class="perms"></div>
+              </div>
+            </div>
+
+            <div class="aside-panel">
+              <div class="aside-panel-head">
+                Git Status
+                <button onclick="loadDashboardGit()" class="btn-sm">↻</button>
+              </div>
+              <div class="aside-panel-body" style="padding:10px 12px">
+                <pre id="dash-git-status" class="git-status-pre">Loading…</pre>
+              </div>
+            </div>
+
+            <div class="aside-panel">
+              <div class="aside-panel-head">Quick Capture</div>
+              <div class="aside-panel-body quick-capture">
+                <textarea id="quick-idea-text" placeholder="Drop an idea before it fades…" rows="3"></textarea>
+                <button onclick="quickCaptureIdea()" class="btn-sm btn-accent" style="width:100%;padding:6px 0;margin-top:6px">Save Idea</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── IDEAS ─── -->
+      <div id="ideas-view" class="view">
+        <div class="view-head">
+          <h2>Idea Vault</h2>
+        </div>
+        <div class="idea-capture">
+          <textarea id="idea-input" placeholder="What's the idea? Describe it." rows="2"></textarea>
+          <div class="idea-capture-aside">
+            <input type="text" id="idea-tags-input" placeholder="tags, comma" style="width:150px">
+            <button onclick="saveIdea()" class="btn-sm btn-accent" style="padding:8px 0">+ Save</button>
+          </div>
+        </div>
+        <div id="ideas-list" class="idea-list"></div>
+      </div>
+
+      <!-- ─── GIT ─── -->
+      <div id="git-view" class="view" style="padding-bottom:0">
+        <div class="view-head" style="margin-bottom:12px">
+          <h2>Git Panel</h2>
+          <div class="view-actions">
+            <button onclick="gitStageAll()" class="btn-sm btn-accent">Stage All</button>
+            <button onclick="loadGitPanel()" class="btn-sm">↻ Refresh</button>
+          </div>
+        </div>
+        <div class="git-layout">
+          <div class="git-panel">
+            <div class="git-panel-head">
+              Status / Diff
+              <span id="git-branch-label" class="muted" style="font-size:10px;text-transform:none;letter-spacing:0"></span>
+            </div>
+            <div class="git-panel-body git-panel-inner">
+              <pre id="git-status-out" class="git-status-out">Loading…</pre>
+              <pre id="git-diff-out" class="git-diff-pre">—</pre>
+            </div>
+            <div class="git-commit-area">
+              <textarea id="commit-msg-input" placeholder="Commit message…" rows="2"></textarea>
+              <p class="sm muted" id="git-ai-status" style="margin-bottom:6px"></p>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <button onclick="generateAICommitMsg()" class="btn-sm btn-accent">⬡ AI Message</button>
+                <button onclick="doCommit()" class="btn-sm">Commit</button>
+                <button onclick="doPush()" class="btn-sm">Push</button>
+                <button onclick="doCommitAndPush()" class="btn-sm btn-accent">Commit + Push</button>
+              </div>
+            </div>
+          </div>
+          <div class="git-panel">
+            <div class="git-panel-head">Log</div>
+            <div class="git-panel-body">
+              <div id="git-log-out" class="git-log-out"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── TOOLS / TERMINAL ─── -->
+      <div id="tools-view" class="view">
+        <div class="view-head">
+          <h2>Terminal</h2>
+          <span id="ws-path-display" class="muted mono sm" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+        </div>
+        <p id="permissions-status" class="muted sm" style="margin-bottom:10px"></p>
+        <div class="cmd-row">
+          <span class="cmd-prompt">›</span>
+          <input type="text" id="cmd-input" placeholder="command to run"
+            autocomplete="off" spellcheck="false">
+          <button onclick="runCommand()"  class="btn-sm btn-accent">Run</button>
+          <button onclick="stopCommand()" class="btn-sm btn-danger">Stop</button>
+        </div>
+        <div id="cmd-output" class="terminal-output" style="height:calc(100vh - 255px);min-height:200px"></div>
+      </div>
+
+      <!-- ─── WORKFLOWS ─── -->
+      <div id="workflows-view" class="view">
+        <div class="view-head">
+          <h2>Workflows</h2>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 260px;gap:20px;align-items:start">
+          <div id="workflows-list" class="workflow-list"></div>
+          <div class="s-group">
+            <h3>New Workflow</h3>
+            <input type="text" id="wf-name-input"  placeholder="Name"           style="margin-bottom:7px">
+            <input type="text" id="wf-cmd-input"   placeholder="Command"        style="margin-bottom:7px;font-family:var(--mono);font-size:12px">
+            <input type="text" id="wf-cwd-input"   placeholder="Working dir"    style="margin-bottom:7px;font-family:var(--mono);font-size:12px">
+            <select id="wf-icon-select" style="margin-bottom:12px">
+              <option value="▶">▶ Run</option>
+              <option value="🧪">🧪 Test</option>
+              <option value="📦">📦 Build</option>
+              <option value="🚀">🚀 Deploy</option>
+              <option value="🔧">🔧 Config</option>
+              <option value="🧹">🧹 Clean</option>
+              <option value="⚡">⚡ Fast</option>
+            </select>
+            <button onclick="saveWorkflow()" class="btn-sm btn-accent" style="width:100%;padding:8px 0">Save Workflow</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── FILES ─── -->
+      <div id="file-browser-view" class="view">
+        <div class="view-head">
+          <h2>File Browser</h2>
+          <div class="view-actions">
+            <span id="file-path-display" class="muted mono sm"
+              style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+            <button onclick="goUpDirectory()" class="btn-sm">↑ Up</button>
+          </div>
+        </div>
+        <!-- Path + Search bar -->
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+          <input type="text" id="file-path-input" placeholder="Enter path, e.g. ~/PY"
+            style="flex:1;font-family:var(--mono);font-size:12px"
+            onkeydown="if(event.key==='Enter')browsePath()">
+          <button onclick="browsePath()" class="btn-sm btn-accent">Go</button>
+          <button onclick="goUpDirectory()" class="btn-sm">↑</button>
+        </div>
+        <div style="margin-bottom:10px">
+          <input type="text" id="file-search-input" placeholder="Filter files…"
+            style="width:100%;font-size:12px"
+            oninput="filterFileList(this.value)">
+        </div>
+        <div id="file-list" class="file-list"></div>
+      </div>
+
+      <!-- ─── CHAT ─── -->
+      <div id="conversations-view" class="view">
+        <div class="view-head">
+          <h2>AI Chat</h2>
+          <div class="view-actions">
+            <button onclick="newConversation()"   class="btn-sm btn-accent">+ New</button>
+            <button onclick="clearConversations()" class="btn-sm btn-danger">Clear</button>
+          </div>
+        </div>
+        <div id="conversations-list" class="conv-list"></div>
+      </div>
+
+      <!-- ─── ACTIVITY ─── -->
+      <div id="activity-view" class="view">
+        <div class="view-head">
+          <h2>Activity Log</h2>
+          <button onclick="loadActivityLog()" class="btn-sm">↻ Refresh</button>
+        </div>
+        <div id="activity-log" class="activity-list"><p class="muted sm">Loading…</p></div>
+      </div>
+
+      <!-- ─── SETTINGS ─── -->
+      <div id="settings-view" class="view">
+        <div class="view-head"><h2>Settings</h2></div>
+        <div class="settings-groups">
+
+          <section class="s-group">
+            <h3>Workspace</h3>
+            <p class="muted sm" id="workspace-status">Loading…</p>
+            <div class="s-row" style="margin-top:8px">
+              <input type="text" id="workspace-path-input" placeholder="/path/to/workspace">
+              <button onclick="saveWorkspace()" class="btn-sm">Set</button>
+            </div>
+            <div class="s-chips">
+              <button onclick="setQuickWorkspace('~')"          class="chip">~</button>
+              <button onclick="setQuickWorkspace('~/Desktop')"  class="chip">Desktop</button>
+              <button onclick="setQuickWorkspace('~/Documents')" class="chip">Documents</button>
+              <button onclick="setQuickWorkspace('~/PY')"       class="chip">PY</button>
+            </div>
+          </section>
+
+          <section class="s-group">
+            <h3>GitHub / Copilot Token</h3>
+            <p class="muted sm" id="token-status">Checking…</p>
+            <div class="s-row" style="margin-top:8px">
+              <input type="password" id="github-token-input" placeholder="ghp_…">
+              <button onclick="saveGitHubToken()" class="btn-sm">Save</button>
+            </div>
+          </section>
+
+          <section class="s-group">
+            <h3>Active Sessions</h3>
+            <p class="muted sm">Devices currently signed in to your account.</p>
+            <div id="sessions-list" style="margin-top:10px"><p class="muted sm">Loading…</p></div>
+            <button onclick="loadSessions()" class="btn-sm" style="margin-top:8px">↻ Refresh</button>
+          </section>
+
+          <section class="s-group">
+            <h3>Appearance</h3>
+            <div class="s-chips">
+              <button onclick="setTheme('dark')"  class="chip" id="chip-dark">Dark</button>
+              <button onclick="setTheme('light')" class="chip" id="chip-light">Light</button>
+              <button onclick="setTheme('auto')"  class="chip" id="chip-auto">Auto</button>
+            </div>
+          </section>
+
+          <section class="s-group" id="admin-mobile-link" style="display:none">
+            <h3>Admin</h3>
+            <button onclick="switchView('admin')" class="btn-sm">Open Admin Panel</button>
+          </section>
+
+          <section class="s-group s-danger">
+            <h3>Danger Zone</h3>
+            <p class="muted sm" style="margin-bottom:10px">These actions cannot be undone.</p>
+            <button onclick="resetAllHistory()" class="btn-sm btn-danger">Reset All History</button>
+          </section>
+
+        </div>
+      </div>
+
+      <!-- ─── BILLING ─── -->
+      <div id="billing-view" class="view">
+        <div class="view-head"><h2>Plan &amp; Billing</h2></div>
+
+        <div id="billing-status-bar" style="display:none">
+          <div class="bsb-top">
+            <span id="bsb-plan-label" class="bsb-plan">Free</span>
+            <span id="bsb-calls-label" class="bsb-calls">0 / 20 calls today</span>
+          </div>
+          <div class="usage-track"><div id="usage-fill" class="usage-fill" style="width:0%"></div></div>
+        </div>
+
+        <!-- Rendered by _renderPricingCards() in script.js -->
+        <div id="pricing-cards" class="pricing-grid"></div>
+
+        <div class="s-group" id="license-section" style="max-width:480px">
+          <h3>Activate License Key</h3>
+          <p class="muted sm" style="margin-bottom:10px">Already purchased self-hosted? Enter your key.</p>
+          <div class="s-row">
+            <input type="text" id="license-key-input" placeholder="VSCARS-…" autocomplete="off" spellcheck="false">
+            <button onclick="activateLicense()" class="btn-sm">Activate</button>
+          </div>
+          <p class="sm" id="license-status" style="margin-top:8px;color:var(--t2)"></p>
+        </div>
+
+        <div class="s-group" id="manage-billing-section" style="display:none;max-width:480px;margin-top:10px">
+          <h3>Manage Subscription</h3>
+          <p class="muted sm" style="margin-bottom:10px">Update payment, cancel, or view invoices.</p>
+          <button onclick="openBillingPortal()" class="btn-secondary">Open Billing Portal</button>
+        </div>
+      </div>
+
+      <!-- ─── ADMIN ─── -->
+      <div id="admin-view" class="view">
+        <div class="view-head"><h2>Admin</h2></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <section class="s-group">
+            <h3>Pending Access Requests</h3>
+            <div id="pending-requests" style="margin-top:8px"><p class="muted sm">Loading…</p></div>
+          </section>
+          <section class="s-group">
+            <h3>Users</h3>
+            <div id="users-list" style="margin-top:8px"><p class="muted sm">Loading…</p></div>
+          </section>
+        </div>
+      </div>
+
+    </div><!-- .views -->
+  </div><!-- .panel -->
+</div><!-- .shell-body -->
+
+<!-- Status bar (VSCode style) -->
+<div class="statusbar">
+  <span class="sb-item"><strong>VSCARS</strong></span>
+  <span class="sb-item" id="sb-workspace" title="Workspace">~/workspace</span>
+  <span class="sb-sep"></span>
+  <span class="sb-item" id="sb-plan">Free</span>
+</div>
+
+</div><!-- .shell -->
+</div><!-- #app -->
+
+<!-- Mobile pill handle — tap or drag up to open drawer -->
+<div id="mob-pill" class="mob-pill">
+  <div class="mob-pill-bar"></div>
+  <span class="mob-pill-label">All Services</span>
+</div>
+
+<!-- Mobile full-services drawer -->
+<div id="mob-drawer-backdrop" class="mob-drawer-backdrop" onclick="closeMobDrawer()"></div>
+<div id="mob-drawer" class="mob-drawer">
+  <div id="mob-drawer-handle" class="mob-drawer-handle-zone">
+    <div class="mob-drawer-grip"></div>
+  </div>
+
+  <div class="mob-drawer-header">
+    <span class="mob-drawer-title">Services</span>
+    <span id="mob-drawer-current" class="mob-drawer-current"></span>
+  </div>
+
+  <div class="mob-drawer-grid">
+    <button class="mob-drawer-item nav-item" data-view="dashboard">⌘<span>Home</span></button>
+    <button class="mob-drawer-item nav-item" data-view="ideas">✦<span>Ideas</span></button>
+    <button class="mob-drawer-item nav-item" data-view="git">⎇<span>Git</span></button>
+    <button class="mob-drawer-item nav-item" data-view="tools">›_<span>Terminal</span></button>
+    <button class="mob-drawer-item nav-item" data-view="workflows">⬡<span>Workflows</span></button>
+    <button class="mob-drawer-item nav-item" data-view="file-browser">⊞<span>Files</span></button>
+    <button class="mob-drawer-item nav-item" data-view="conversations">⊘<span>AI Chat</span></button>
+    <button class="mob-drawer-item nav-item" data-view="activity">≣<span>Activity</span></button>
+    <button class="mob-drawer-item nav-item" data-view="settings">⊛<span>Settings</span></button>
+    <button class="mob-drawer-item nav-item" data-view="billing">◬<span>Plan</span></button>
+  </div>
+
+  <button class="mob-drawer-logout" onclick="logout();closeMobDrawer()">Sign Out</button>
+</div>
+
+<!-- ── TOOL EXECUTION MODAL (used by all quick-actions, Copilot, AI Chat) ── -->
+<div id="tool-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeTool()">
+  <div class="modal tool-modal" style="max-width:520px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <span class="modal-title" id="modal-title" style="margin:0">Execute</span>
+      <button onclick="closeTool()" class="btn-sm">✕</button>
+    </div>
+    <form id="tool-form" onsubmit="executeToolForm(event)" autocomplete="off">
+      <div id="tool-inputs"></div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button type="submit" class="btn-primary" style="flex:1">Run</button>
+        <button type="button" onclick="closeTool()" class="btn-secondary">Cancel</button>
+      </div>
+    </form>
+    <div id="tool-result" style="display:none;margin-top:14px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:var(--t3);margin-bottom:7px">Output</div>
+      <pre id="result-output" class="terminal-output" style="max-height:300px;min-height:60px"></pre>
+      <div id="copy-result-row" style="margin-top:7px;display:none">
+        <button onclick="copyResult()" class="btn-sm btn-accent">Copy result</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── UPGRADE MODAL ── -->
+<div id="upgrade-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeUpgradeModal()">
+  <div class="modal" style="max-width:400px;text-align:center">
+    <div style="font-size:28px;margin-bottom:12px">◬</div>
+    <div class="modal-title">Upgrade your plan</div>
+    <p class="muted sm" id="upgrade-modal-msg" style="margin-bottom:18px">You've reached your daily limit.</p>
+    <button onclick="switchView('billing');closeUpgradeModal()" class="btn-primary" style="margin-bottom:8px">View Plans</button>
+    <br><button onclick="closeUpgradeModal()" class="btn-sm" style="margin-top:4px">Maybe later</button>
+  </div>
+</div>
+
+<!-- ── QR CODE MODAL ── -->
+<div id="qr-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeQRModal()">
+  <div class="modal" style="max-width:320px;text-align:center">
+    <div class="modal-title">Scan to connect</div>
+    <div id="qr-code-container" style="margin:16px 0"></div>
+    <p class="muted sm" id="qr-url-display"></p>
+    <button onclick="closeQRModal()" class="btn-sm" style="margin-top:14px">Close</button>
+  </div>
+</div>
+
+<!-- ── ONBOARDING MODAL ── -->
+<div id="onboarding-modal" class="modal-overlay" style="display:none">
+  <div class="modal onboarding-body">
+    <div style="font-size:32px;margin-bottom:12px">⌘</div>
+    <div class="modal-title">Welcome to VSCARS</div>
+    <div class="onboarding-step"><strong>1.</strong> Set your workspace path in Settings → Workspace</div>
+    <div class="onboarding-step"><strong>2.</strong> Add your GitHub token to unlock Copilot & AI commits</div>
+    <div class="onboarding-step"><strong>3.</strong> Use Idea Vault to capture thoughts before they vanish</div>
+    <button onclick="finishOnboarding()" class="btn-primary" style="margin-top:8px">Get Started</button>
+  </div>
+</div>
+
+<script src="/static/script.js?v=14.9"></script>
+</body>
+</html>

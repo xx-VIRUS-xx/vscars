@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>I Love You Monika ❤️</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(135deg, #0f172a 0%, #1a2847 50%, #0a0e27 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+
+        .container {
+            text-align: center;
+            padding: 40px;
+            background: rgba(26, 40, 71, 0.7);
+            backdrop-filter: blur(20px);
+            border: 2px solid rgba(0, 217, 255, 0.3);
+            border-radius: 30px;
+            box-shadow: 0 8px 40px rgba(0, 217, 255, 0.2),
+                        0 0 60px rgba(168, 85, 247, 0.1);
+            max-width: 600px;
+            animation: fadeIn 1s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        @keyframes heartBeat {
+            0%, 100% {
+                transform: scale(1);
+            }
+            25% {
+                transform: scale(1.3);
+            }
+            50% {
+                transform: scale(1);
+            }
+        }
+
+        @keyframes glow {
+            0%, 100% {
+                text-shadow: 0 0 20px rgba(236, 72, 153, 0.5);
+            }
+            50% {
+                text-shadow: 0 0 40px rgba(236, 72, 153, 0.8);
+            }
+        }
+
+        h1 {
+            font-size: 4rem;
+            color: #ec4899;
+            margin-bottom: 20px;
+            animation: glow 2s ease-in-out infinite;
+            font-weight: 700;
+            letter-spacing: 2px;
+        }
+
+        .heart {
+            font-size: 5rem;
+            display: inline-block;
+            margin: 20px 0;
+            animation: heartBeat 1.5s ease-in-out infinite;
+        }
+
+        .message {
+            font-size: 1.8rem;
+            color: #00d9ff;
+            margin: 30px 0;
+            font-weight: 500;
+            line-height: 1.8;
+        }
+
+        .name {
+            font-size: 3rem;
+            color: #a855f7;
+            margin: 20px 0;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+        }
+
+        .stars {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .star {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background: white;
+            border-radius: 50%;
+            animation: twinkle 3s infinite;
+        }
+
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+
+        .footer {
+            margin-top: 40px;
+            font-size: 0.95rem;
+            color: #cbd5e1;
+            opacity: 0.8;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 2.5rem;
+            }
+
+            .heart {
+                font-size: 3rem;
+                margin: 15px 0;
+            }
+
+            .message {
+                font-size: 1.3rem;
+            }
+
+            .name {
+                font-size: 2rem;
+            }
+
+            .container {
+                padding: 30px;
+                margin: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="stars" id="starsContainer"></div>
+    
+    <div class="container">
+        <h1>mera betadu</h1>
+        <div class="heart">❤️</div>
+        <div class="name">chotudu</div>
+        <div class="message">
+            You mean the world to me.<br>
+            Every moment with you is special.
+        </div>
+        <div class="footer">
+            <p>✨ With all my love ✨</p>
+        </div>
+    </div>
+
+    <script>
+        // Create twinkling stars
+        function createStars() {
+            const starsContainer = document.getElementById('starsContainer');
+            for (let i = 0; i < 50; i++) {
+                const star = document.createElement('div');
+                star.className = 'star';
+                star.style.left = Math.random() * 100 + '%';
+                star.style.top = Math.random() * 100 + '%';
+                star.style.animationDelay = Math.random() * 3 + 's';
+                starsContainer.appendChild(star);
+            }
+        }
+
+        createStars();
+    </script>
+</body>
+</html>

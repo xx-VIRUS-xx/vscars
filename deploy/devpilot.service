@@ -1,0 +1,43 @@
+# DevPilot - VS Code Copilot Mobile Controller
+# systemd service file
+#
+# SETUP:
+#   1. Edit paths below to match your setup
+#   2. Copy:    sudo cp devpilot.service /etc/systemd/system/
+#   3. Enable:  sudo systemctl enable devpilot
+#   4. Start:   sudo systemctl start devpilot
+#   5. Status:  sudo systemctl status devpilot
+#   6. Logs:    journalctl -u devpilot -f
+
+[Unit]
+Description=DevPilot - VS Code Copilot Mobile Controller
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xxvirusxx
+Group=staff
+WorkingDirectory=/Users/xxvirusxx/PY/SideHustle/LLM redefined
+ExecStart=/usr/bin/python3 -u main.py
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+# Environment
+EnvironmentFile=/Users/xxvirusxx/PY/SideHustle/LLM redefined/.env
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/Users/xxvirusxx/PY/SideHustle/LLM redefined
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=devpilot
+
+[Install]
+WantedBy=multi-user.target

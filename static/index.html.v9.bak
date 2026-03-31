@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="JARVIS">
+    <meta name="theme-color" content="#0a0014">
+    <meta name="description" content="JARVIS - VS Code Copilot Mobile Controller">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>JARVIS System | Future AI Control</title>
+    <link rel="stylesheet" href="/static/style.css?v=9.0">
+</head>
+<body>
+    <div id="app">
+        <!-- Toast Notifications -->
+        <div id="toast-container" class="toast-container"></div>
+
+        <!-- Loading Overlay -->
+        <div id="loading-overlay" class="loading-overlay" style="display: none;">
+            <div class="spinner"></div>
+            <p id="loading-text">Loading...</p>
+        </div>
+
+        <!-- Auth Container -->
+        <div id="auth-container" class="container auth-view">
+            <div class="auth-box">
+                <div class="auth-header">
+                    <h1>🎮 VS Code Copilot</h1>
+                    <p class="subtitle">Mobile Controller</p>
+                </div>
+                
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="login" onclick="switchTab('login')">
+                        <span class="tab-icon">🔑</span> Login
+                    </button>
+                    <button class="tab-btn" data-tab="register" onclick="switchTab('register')">
+                        <span class="tab-icon">✏️</span> Register
+                    </button>
+                    <button class="tab-btn" data-tab="qr" onclick="switchTab('qr')">
+                        <span class="tab-icon">📱</span> QR Access
+                    </button>
+                </div>
+                
+                <!-- Login Tab -->
+                <div id="login-tab" class="tab-content active">
+                    <div class="form-group">
+                        <label for="login-username">📝 Username</label>
+                        <input type="text" id="login-username" placeholder="Enter your username" />
+                    </div>
+                    <div class="form-group">
+                        <label for="login-password">🔐 Password</label>
+                        <input type="password" id="login-password" placeholder="Enter your password" />
+                    </div>
+                    <div class="form-group">
+                        <label for="login-device-id">📱 Device ID</label>
+                        <input type="text" id="login-device-id" placeholder="e.g., iPhone-16-Pro" />
+                    </div>
+                    <button onclick="login()" class="btn-primary btn-login">
+                        <span class="btn-icon">→</span> Login
+                    </button>
+                    <p class="error-msg" id="login-error"></p>
+                </div>
+                
+                <!-- Register Tab -->
+                <div id="register-tab" class="tab-content">
+                    <div class="form-group">
+                        <label for="register-username">👤 Username</label>
+                        <input type="text" id="register-username" placeholder="Choose a username" />
+                    </div>
+                    <div class="form-group">
+                        <label for="register-email">✉️ Email</label>
+                        <input type="email" id="register-email" placeholder="your.email@example.com" />
+                    </div>
+                    <div class="form-group">
+                        <label for="register-password">🔐 Password</label>
+                        <input type="password" id="register-password" placeholder="Create a strong password" />
+                    </div>
+                    <div class="form-group">
+                        <label for="register-device-id">📱 Device ID</label>
+                        <input type="text" id="register-device-id" placeholder="e.g., iPhone-16-Pro" />
+                    </div>
+                    <p class="info-text">💡 Use the same Device ID as in .env (SUPERUSER_PHONE) to become superuser!</p>
+                    <button onclick="register()" class="btn-primary btn-register">
+                        <span class="btn-icon">✓</span> Create Account
+                    </button>
+                    <p class="error-msg" id="register-error"></p>
+                </div>
+                
+                <!-- QR Access Tab -->
+                <div id="qr-tab" class="tab-content">
+                    <div class="form-group">
+                        <label for="qr-username">👤 Username</label>
+                        <input type="text" id="qr-username" placeholder="Your username" />
+                    </div>
+                    <div class="form-group">
+                        <label for="qr-email">✉️ Email</label>
+                        <input type="email" id="qr-email" placeholder="your.email@example.com" />
+                    </div>
+                    <div class="form-group">
+                        <label for="qr-device-id">📱 Device ID</label>
+                        <input type="text" id="qr-device-id" placeholder="e.g., Samsung-S24" />
+                    </div>
+                    <button onclick="requestQRAccess()" class="btn-primary btn-qr">
+                        <span class="btn-icon">📷</span> Generate QR Code
+                    </button>
+                    <div id="qr-display" class="qr-display-box" style="display: none;">
+                        <div class="qr-image-wrapper">
+                            <img id="qr-code-image" src="" alt="QR Code" class="qr-code-img">
+                        </div>
+                        <p class="qr-instruction">Ask your superuser to scan this QR code</p>
+                        <p class="qr-request-id">Request ID: <code id="qr-request-id"></code></p>
+                    </div>
+                    <p class="error-msg" id="qr-error"></p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Main Container -->
+        <div id="main-container" class="container main-view" style="display: none;">
+            <!-- Header -->
+            <header class="header">
+                <div class="header-content">
+                    <div class="header-left">
+                        <h1 class="header-title">🎮 VS Code Controller</h1>
+                    </div>
+                    <div class="header-center">
+                        <div id="connection-status" class="status-indicator active">
+                            <span class="status-dot"></span> Connected
+                        </div>
+                        <div id="ngrok-status" class="ngrok-indicator"></div>
+                    </div>
+                    <div class="header-right">
+                        <div class="user-info">
+                            <div class="user-details">
+                                <span id="user-name" class="user-name">Loading...</span>
+                                <span id="user-badge" class="badge">User</span>
+                            </div>
+                        </div>
+                        <button onclick="logout()" class="btn-logout">
+                            <span class="btn-icon">🚪</span> Logout
+                        </button>
+                    </div>
+                </div>
+            </header>
+            
+            <!-- Main Content -->
+            <main class="main-content">
+                <!-- Sidebar -->
+                <aside class="sidebar">
+                    <nav class="nav-menu">
+                        <button class="nav-item active" data-view="dashboard">
+                            <span class="nav-icon">📊</span>
+                            <span class="nav-label">Dashboard</span>
+                        </button>
+                        <button class="nav-item" data-view="tools">
+                            <span class="nav-icon">🛠️</span>
+                            <span class="nav-label">Tools</span>
+                        </button>
+                        <button class="nav-item" data-view="file-browser">
+                            <span class="nav-icon">📁</span>
+                            <span class="nav-label">Browse</span>
+                        </button>
+                        <button class="nav-item" data-view="conversations">
+                            <span class="nav-icon">💬</span>
+                            <span class="nav-label">Conversations</span>
+                        </button>
+                        <button class="nav-item" data-view="activity">
+                            <span class="nav-icon">📋</span>
+                            <span class="nav-label">Activity Log</span>
+                        </button>
+                        <button class="nav-item" data-view="execution-logs">
+                            <span class="nav-icon">⚡</span>
+                            <span class="nav-label">Backend Logs</span>
+                        </button>
+                        <button class="nav-item" data-view="bugs">
+                            <span class="nav-icon">🐛</span>
+                            <span class="nav-label">Bug Tracker</span>
+                        </button>
+                        <button class="nav-item" data-view="settings">
+                            <span class="nav-icon">🔧</span>
+                            <span class="nav-label">Settings</span>
+                        </button>
+                        <button class="nav-item" id="admin-nav" style="display: none;" data-view="admin">
+                            <span class="nav-icon">⚙️</span>
+                            <span class="nav-label">Admin</span>
+                        </button>
+                    </nav>
+                </aside>
+                
+                <!-- Content Area -->
+                <section class="content">
+                    <!-- Dashboard View -->
+                    <div id="dashboard-view" class="view active">
+                        <h2 class="view-title">📊 Dashboard</h2>
+                        <div class="dashboard-grid">
+                            <div class="card card-primary">
+                                <div class="card-header">
+                                    <h3>⚡ Quick Actions</h3>
+                                </div>
+                                <div class="quick-actions">
+                                    <button onclick="quickCopilotAgent()" class="action-btn action-chat" style="grid-column: span 3; background: linear-gradient(135deg, rgba(138,43,226,0.3), rgba(0,255,255,0.2)); border-color: rgba(138,43,226,0.5);">
+                                        <span class="action-icon">🤖</span>
+                                        <span class="action-label">Copilot Agent (Claude Opus)</span>
+                                    </button>
+                                    <button onclick="quickBrowse()" class="action-btn action-open">
+                                        <span class="action-icon">📂</span>
+                                        <span class="action-label">Browse Dir</span>
+                                    </button>
+                                    <button onclick="quickCreateProject()" class="action-btn action-run">
+                                        <span class="action-icon">🚀</span>
+                                        <span class="action-label">New Project</span>
+                                    </button>
+                                    <button onclick="quickChat()" class="action-btn action-chat">
+                                        <span class="action-icon">💬</span>
+                                        <span class="action-label">AI Chat</span>
+                                    </button>
+                                    <button onclick="quickOpen()" class="action-btn action-open">
+                                        <span class="action-icon">📖</span>
+                                        <span class="action-label">Open File</span>
+                                    </button>
+                                    <button onclick="quickRun()" class="action-btn action-run">
+                                        <span class="action-icon">▶️</span>
+                                        <span class="action-label">Run Cmd</span>
+                                    </button>
+                                    <button onclick="quickGitStatus()" class="action-btn action-open">
+                                        <span class="action-icon">🌿</span>
+                                        <span class="action-label">Git Status</span>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div class="card card-permissions">
+                                <div class="card-header">
+                                    <h3>🔐 My Permissions</h3>
+                                </div>
+                                <div id="permissions-display" class="permissions-list">
+                                    <div class="skeleton"></div>
+                                </div>
+                            </div>
+                            
+                            <div class="card card-access">
+                                <div class="card-header">
+                                    <h3>🌐 Remote Access</h3>
+                                </div>
+                                <div id="ngrok-box" class="ngrok-box" style="display: none;">
+                                    <p class="ngrok-label">Public URL</p>
+                                    <div class="url-box">
+                                        <input type="text" id="public-url" readonly class="url-input" />
+                                        <button onclick="copyToClipboard()" class="btn-copy" title="Copy to clipboard">
+                                            <span class="copy-icon">📋</span>
+                                        </button>
+                                    </div>
+                                    <p class="ngrok-hint">✅ Share this URL to access from anywhere</p>
+                                </div>
+                                <p id="ngrok-disabled" class="ngrok-hint">⏸️ Ngrok tunnel not active</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Tools View -->
+                    <div id="tools-view" class="view">
+                        <h2 class="view-title">🛠️ Tools</h2>
+                        <div id="tools-container" class="tools-grid">
+                            <!-- Tools will be loaded here -->
+                        </div>
+                    </div>
+                    
+                    <!-- File Browser View -->
+                    <div id="file-browser-view" class="view">
+                        <h2 class="view-title">📁 File Browser</h2>
+                        <div class="file-browser">
+                            <div class="file-path-section">
+                                <input type="text" id="file-path" placeholder="Enter directory path (e.g., /Users/username/project)" class="file-input" />
+                                <button onclick="browsePath()" class="btn-browse">
+                                    <span class="btn-icon">🔍</span> Browse
+                                </button>
+                            </div>
+                            <div id="files-list" class="files-list">
+                                <p class="placeholder">📍 Enter a path to explore</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Conversations View -->
+                    <div id="conversations-view" class="view">
+                        <h2 class="view-title">💬 Conversations</h2>
+                        <div class="conversations-container">
+                            <div class="conversations-controls">
+                                <button onclick="loadConversations()" class="btn-primary">
+                                    <span class="btn-icon">🔄</span> Refresh
+                                </button>
+                                <button onclick="clearConversations()" class="btn-secondary">
+                                    <span class="btn-icon">🗑️</span> Clear All
+                                </button>
+                            </div>
+                            <div id="conversations-list" class="conversations-list">
+                                <p class="placeholder">Loading conversations...</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Activity Log View -->
+                    <div id="activity-view" class="view">
+                        <h2 class="view-title">📋 Activity Log</h2>
+                        <div class="activity-container">
+                            <div class="activity-controls">
+                                <button onclick="loadActivityLog()" class="btn-primary">
+                                    <span class="btn-icon">🔄</span> Refresh
+                                </button>
+                            </div>
+                            <div id="activity-log" class="activity-log-list">
+                                <p class="placeholder">Loading activity...</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Execution Logs View (Backend) -->
+                    <div id="execution-logs-view" class="view">
+                        <h2 class="view-title">⚡ Backend Execution Logs</h2>
+                        <div class="execution-logs-container">
+                            <div class="execution-logs-controls">
+                                <button onclick="loadExecutionLogs()" class="btn-primary">
+                                    <span class="btn-icon">🔄</span> Refresh
+                                </button>
+                                <button onclick="clearExecutionLogs()" class="btn-secondary">
+                                    <span class="btn-icon">🗑️</span> Clear Cache
+                                </button>
+                            </div>
+                            <div id="execution-logs-display" class="execution-logs-list">
+                                <p class="placeholder">Loading backend logs...</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Bug Tracker View -->
+                    <div id="bugs-view" class="view">
+                        <h2 class="view-title">🐛 Bug Tracker</h2>
+                        <div class="bug-tracker-container">
+                            <div class="bug-controls">
+                                <button onclick="loadBugs()" class="btn-primary">
+                                    <span class="btn-icon">🔄</span> Refresh
+                                </button>
+                                <button onclick="showReportBugForm()" class="btn-copilot">
+                                    <span class="btn-icon">📝</span> Report Bug
+                                </button>
+                            </div>
+                            <div id="bug-report-form" style="display: none;" class="bug-form">
+                                <input type="text" id="bug-title" placeholder="Bug title (e.g. 'State carryover')" class="bug-input" />
+                                <textarea id="bug-desc" placeholder="Describe the bug..." rows="3" class="bug-input"></textarea>
+                                <select id="bug-severity" class="bug-input">
+                                    <option value="low">Low</option>
+                                    <option value="medium" selected>Medium</option>
+                                    <option value="high">High</option>
+                                    <option value="critical">Critical</option>
+                                </select>
+                                <div class="bug-form-actions">
+                                    <button onclick="submitBugReport()" class="btn-primary">Submit</button>
+                                    <button onclick="document.getElementById('bug-report-form').style.display='none'" class="btn-secondary">Cancel</button>
+                                </div>
+                            </div>
+                            <div id="bugs-list" class="bugs-list">
+                                <p class="placeholder">Loading bugs...</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Settings View -->
+                    <div id="settings-view" class="view">
+                        <h2 class="view-title">🔧 Settings</h2>
+                        <div class="settings-container">
+                            <!-- Workspace Path -->
+                            <div class="card card-primary" style="margin-bottom: 1.5rem;">
+                                <div class="card-header">
+                                    <h3>📁 Workspace Path</h3>
+                                </div>
+                                <div style="padding: 1rem;">
+                                    <p style="color: #94a3b8; margin-bottom: 0.8rem; font-size: 0.85rem;">
+                                        Root directory for all file operations, commands, and project creation. All relative paths resolve from here.
+                                    </p>
+                                    <div id="workspace-status" style="margin-bottom: 0.8rem; font-size: 0.9rem;">
+                                        <span style="color: #94a3b8;">Loading workspace...</span>
+                                    </div>
+                                    <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                                        <input type="text" id="workspace-path-input" 
+                                            placeholder="/Users/xxvirusxx/Projects" 
+                                            style="flex: 1; min-width: 200px; padding: 0.6rem 0.8rem; background: rgba(0,0,0,0.4); border: 1px solid rgba(0,255,255,0.2); border-radius: 8px; color: #e2e8f0; font-family: monospace; font-size: 0.85rem;" />
+                                        <button onclick="saveWorkspace()" class="btn-primary" style="white-space: nowrap;">
+                                            <span class="btn-icon">💾</span> Set Path
+                                        </button>
+                                    </div>
+                                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.6rem;">
+                                        <button onclick="setQuickWorkspace('~')" class="btn-secondary" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">~ Home</button>
+                                        <button onclick="setQuickWorkspace('~/Desktop')" class="btn-secondary" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">Desktop</button>
+                                        <button onclick="setQuickWorkspace('~/Documents')" class="btn-secondary" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">Documents</button>
+                                        <button onclick="setQuickWorkspace('~/PY')" class="btn-secondary" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">PY</button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- GitHub Token -->
+                            <div class="card card-primary" style="margin-bottom: 1.5rem;">
+                                <div class="card-header">
+                                    <h3>🤖 AI Model (GPT-4o via GitHub)</h3>
+                                </div>
+                                <div style="padding: 1rem;">
+                                    <p style="color: #94a3b8; margin-bottom: 0.8rem; font-size: 0.85rem;">
+                                        Uses GitHub Models API for AI chat. Your classic PAT token is configured in .env.
+                                    </p>
+                                    <div id="token-status" style="margin-bottom: 1rem; font-size: 0.9rem;">
+                                        <span style="color: #94a3b8;">Checking token status...</span>
+                                    </div>
+                                    <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                                        <input type="password" id="github-token-input" 
+                                            placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" 
+                                            style="flex: 1; min-width: 200px; padding: 0.6rem 0.8rem; background: rgba(0,0,0,0.4); border: 1px solid rgba(0,255,255,0.2); border-radius: 8px; color: #e2e8f0; font-family: monospace; font-size: 0.85rem;" />
+                                        <button onclick="saveGitHubToken()" class="btn-primary" style="white-space: nowrap;">
+                                            <span class="btn-icon">💾</span> Save Token
+                                        </button>
+                                    </div>
+                                    <p style="color: #64748b; margin-top: 0.6rem; font-size: 0.75rem;">
+                                        Classic token (<code>ghp_</code>) works. <a href="https://github.com/settings/tokens" target="_blank" style="color: #00ffff;">github.com/settings/tokens</a>
+                                    </p>
+                                </div>
+                            </div>
+                            
+                            <!-- System Info -->
+                            <div class="card" style="border: 1px solid rgba(0,255,255,0.15); margin-bottom: 1.5rem;">
+                                <div class="card-header">
+                                    <h3>🖥️ System Info</h3>
+                                </div>
+                                <div style="padding: 1rem;">
+                                    <pre id="system-info" style="color: #94a3b8; font-size: 0.8rem; white-space: pre-wrap; margin: 0;">Click refresh to load...</pre>
+                                    <button onclick="loadSystemInfo()" class="btn-secondary" style="margin-top: 0.8rem; font-size: 0.8rem;">
+                                        <span class="btn-icon">🔄</span> Refresh Info
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Reset History -->
+                            <div class="card" style="border: 1px solid rgba(255,100,100,0.2); margin-bottom: 1.5rem;">
+                                <div class="card-header">
+                                    <h3>🗑️ Reset History</h3>
+                                </div>
+                                <div style="padding: 1rem;">
+                                    <p style="color: #94a3b8; margin-bottom: 1rem; font-size: 0.85rem;">
+                                        Permanently delete all your conversations, activity logs, and execution history. This cannot be undone.
+                                    </p>
+                                    <button onclick="resetAllHistory()" class="btn-secondary" style="border-color: rgba(255,100,100,0.4); color: #ff6b6b;">
+                                        <span class="btn-icon">⚠️</span> Reset All History
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Admin Panel View -->
+                    <div id="admin-view" class="view">
+                        <h2 class="view-title">⚙️ Admin Panel</h2>
+                        <div class="admin-container">
+                            <div class="card card-admin">
+                                <div class="card-header">
+                                    <h3>📋 Pending Access Requests</h3>
+                                </div>
+                                <div id="pending-requests" class="requests-list">
+                                    <div class="skeleton"></div>
+                                </div>
+                            </div>
+                            
+                            <div class="card card-admin">
+                                <div class="card-header">
+                                    <h3>👥 Manage Users</h3>
+                                </div>
+                                <div id="users-list" class="users-list">
+                                    <div class="skeleton"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+    
+    <!-- Modal for Tool Execution -->
+    <div id="tool-modal" class="modal">
+        <div class="modal-content">
+            <button class="close" onclick="closeModal()">✕</button>
+            <h2 id="modal-title" class="modal-title">Execute Tool</h2>
+            <form id="tool-form" onsubmit="executeToolForm(event)" class="tool-form">
+                <div id="tool-inputs" class="tool-inputs"></div>
+                <div class="modal-actions">
+                    <button type="button" onclick="closeModal()" class="btn-secondary">Cancel</button>
+                    <button type="submit" class="btn-primary">
+                        <span class="btn-icon">⚡</span> Execute
+                    </button>
+                </div>
+            </form>
+            <div id="tool-result" class="tool-result" style="display: none;">
+                <div class="result-header">
+                    <h3 class="result-title">📤 Result Output</h3>
+                    <button type="button" onclick="document.getElementById('tool-result').style.display='none'" class="btn-close">✕</button>
+                </div>
+                <div class="result-wrapper">
+                    <pre id="result-output" class="result-output"></pre>
+                </div>
+            </div>
+            
+            <!-- Copilot Response Capture Panel (removed — now using direct API) -->
+        </div>
+    </div>
+
+    <!-- Confirmation Dialog -->
+    <div id="confirm-dialog" class="modal-confirm" style="display: none;">
+        <div class="confirm-content">
+            <h3 id="confirm-title">Confirm Action</h3>
+            <p id="confirm-message">Are you sure?</p>
+            <div class="confirm-actions">
+                <button onclick="confirmCancel()" class="btn-secondary">Cancel</button>
+                <button onclick="confirmOk()" class="btn-danger">Confirm</button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="/static/script.js?v=8.0"></script>
+</body>
+</html>
