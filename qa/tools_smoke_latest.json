@@ -1,0 +1,118 @@
+{
+  "summary": {
+    "generated_at": "2026-03-31 21:15:33 UTC",
+    "total": 18,
+    "passed": 18,
+    "failed": 0
+  },
+  "results": [
+    {
+      "tool": "open_file",
+      "http": 200,
+      "success": true,
+      "snippet": "\u2705 SUCCESS: File opened in VS Code\n\ud83d\udcc4 File: /private/var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws/seed.txt\n\ud83d\udccd Line: 1"
+    },
+    {
+      "tool": "open_project",
+      "http": 200,
+      "success": true,
+      "snippet": "\u2705 Project opened in VS Code\n\ud83d\udcc1 Path: /var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws"
+    },
+    {
+      "tool": "create_file",
+      "http": 200,
+      "success": true,
+      "snippet": "\u2705 File created: /private/var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws/new.txt\n\ud83d\udcca Size: 3 bytes"
+    },
+    {
+      "tool": "edit_file",
+      "http": 200,
+      "success": true,
+      "snippet": "\u2705 SUCCESS: File edited\n\ud83d\udcc4 File: /private/var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws/new.txt\n\ud83d\udcdd Changes: +0 bytes"
+    },
+    {
+      "tool": "delete_file",
+      "http": 200,
+      "success": true,
+      "snippet": "\u2705 SUCCESS: File deleted: /private/var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws/new.txt"
+    },
+    {
+      "tool": "read_file",
+      "http": 200,
+      "success": true,
+      "snippet": "\u2705 File: /private/var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws/seed.txt\n\ud83d\udcca Lines: 3\n\nhello world\nline2\n"
+    },
+    {
+      "tool": "run_command",
+      "http": 200,
+      "success": true,
+      "snippet": "\u2705 SUCCESS\n\ud83d\udcc1 CWD: /var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws\n\nsmoke_ok\n"
+    },
+    {
+      "tool": "list_files",
+      "http": 200,
+      "success": true,
+      "snippet": "\u2705 Contents of /var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws\n\ud83d\udcca 0 folders, 1 files\n\n\ud83d\udcc4 seed.txt  (18B)"
+    },
+    {
+      "tool": "search_files",
+      "http": 200,
+      "success": true,
+      "snippet": "\ud83d\udd0d Search Results (1 matches)\n\ud83d\udcc1 In: /var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws\n\ud83d\udd0e Pattern: hello\n\n/var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws/seed."
+    },
+    {
+      "tool": "git_status",
+      "http": 200,
+      "success": true,
+      "snippet": "\u2705 Git Status\n\ud83d\udcc1 Repo: /var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws\n\ud83c\udf3f Branch: master\n\n\ud83d\udcca Changes:\n(Clean \u2014 no changes)\n\n\ud83d\udcdc Recent Commits:\na71ace2 init\n\n\ud83c\udf10 Remote:\n"
+    },
+    {
+      "tool": "git_command",
+      "http": 200,
+      "success": true,
+      "snippet": "\u2705 SUCCESS\n\ud83d\udcc1 Repo: /var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws\n\ud83d\udd27 Command: git status\n\nOn branch master\nnothing to commit, working tree clean\n"
+    },
+    {
+      "tool": "create_project",
+      "http": 200,
+      "success": true,
+      "snippet": "\u2705 Project created: smokeproj\n\ud83d\udcc1 Path: /var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws/smokeproj\n\ud83d\udd27 Type: python\n\ud83d\udce6 Git initialized\n\ud83d\udcbb Opened in VS Code"
+    },
+    {
+      "tool": "open_terminal",
+      "http": 200,
+      "success": true,
+      "snippet": "\u2705 Terminal opened\n\ud83d\udcc1 Path: /var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws"
+    },
+    {
+      "tool": "get_workspace_info",
+      "http": 200,
+      "success": true,
+      "snippet": "\ud83d\udcc1 Workspace: /var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws\n\ud83d\udda5\ufe0f  System: Darwin (Prabhats-MacBook-Air.local)\n\ud83d\udc0d Python: 3.12.4\n\ud83d\udcbb VS Code: 1.113.0\n\ud83d\udce6 Git: git version 2.53.0\n\ud83d\udfe2 Node: v22.17.0"
+    },
+    {
+      "tool": "copilot_agent",
+      "http": 200,
+      "success": true,
+      "snippet": "\ud83e\udd16 COPILOT AGENT RESPONSE\n\ud83d\udcc1 Project: /var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws\n\ud83e\udde0 Model: gpt-4.1\n\ud83d\udd27 Permissions: read\n\nI was unable to create the README file due to a permissions issue"
+    },
+    {
+      "tool": "browse_directory",
+      "http": 200,
+      "success": true,
+      "snippet": "\ud83d\udcc2 Directory: /var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_tools_smoke3_ozwlj5ja/ws\n\ud83d\udcca 3 folders, 4 files (204B)\n\ud83c\udf3f Git branch: master\n\n\ud83d\udcc1 ws/\n\u251c\u2500\u2500 \ud83d\udcc1 smokeproj/\n\u2502   \u251c\u2500\u2500 \ud83d\udcc1 src/\n\u2502   \u251c\u2500\u2500 \ud83d\udcc1 tests/\n\u2502   \u251c\u2500\u2500 \ud83d\udcc4 .gitignore "
+    },
+    {
+      "tool": "ask_copilot",
+      "http": 200,
+      "success": true,
+      "snippet": "\ud83e\udd16 COPILOT RESPONSE\n\n```python\nprint(\"Hello!\")\n```\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\ud83d\udcca Model: gpt-4o-2024-11-20 | Tokens: 64"
+    },
+    {
+      "tool": "ask_ai",
+      "http": 200,
+      "success": true,
+      "snippet": "\ud83e\udd16 COPILOT RESPONSE\n\n```python\nprint(\"Hello!\")\n```\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\ud83d\udcca Model: gpt-4o-2024-11-20 | Tokens: 64"
+    }
+  ]
+}

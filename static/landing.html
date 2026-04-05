@@ -512,7 +512,7 @@ footer{
     <a href="#features" class="hide-mob">Features</a>
     <a href="#pricing" class="hide-mob">Pricing</a>
     <a href="#faq" class="hide-mob">FAQ</a>
-    <a href="/app" class="btn-nav">Try for free &rarr;</a>
+    <a href="/setup" class="btn-nav">Try for free &rarr;</a>
   </div>
 </nav>
 
@@ -538,7 +538,7 @@ footer{
     </p>
 
     <div class="hero-cta">
-      <a href="/app" class="btn-primary">Start for free</a>
+      <a href="/setup" class="btn-primary">Start for free</a>
       <a href="#terminal-demo" class="btn-ghost">See how it works</a>
     </div>
 
@@ -671,8 +671,13 @@ footer{
         </thead>
         <tbody>
           <tr>
-            <td>View files</td>
+            <td>AI chat</td>
             <td class="check">&#10003;</td><td class="check">&#10003;</td>
+            <td class="check">&#10003;</td><td class="check">&#10003;</td>
+          </tr>
+          <tr>
+            <td>View files</td>
+            <td class="cross">&#8212;</td><td class="check">&#10003;</td>
             <td class="check">&#10003;</td><td class="check">&#10003;</td>
           </tr>
           <tr>
@@ -686,12 +691,12 @@ footer{
             <td class="check">&#10003;</td><td class="check">&#10003;</td>
           </tr>
           <tr>
-            <td>AI / Copilot access</td>
+            <td>Machine connector required</td>
             <td class="cross">&#8212;</td><td class="check">&#10003;</td>
             <td class="check">&#10003;</td><td class="check">&#10003;</td>
           </tr>
           <tr>
-            <td>Multi-user workspace</td>
+            <td>Multi-machine / shared workspace</td>
             <td class="cross">&#8212;</td><td class="cross">&#8212;</td>
             <td class="check">&#10003;</td><td class="check">&#10003;</td>
           </tr>
@@ -719,13 +724,13 @@ footer{
         <div class="pc-name">Free</div>
         <div class="pc-price"><sup>$</sup>0<sub> forever</sub></div>
         <ul class="pc-features">
-          <li>View files</li>
-          <li>20 API calls / day</li>
-          <li class="no">Commands &amp; editing</li>
-          <li class="no">AI features</li>
-          <li class="no">Git panel</li>
+          <li>AI chat only</li>
+          <li>50 API calls / day</li>
+          <li class="no">No file/terminal access</li>
+          <li class="no">No machine connector</li>
+          <li class="no">No git operations</li>
         </ul>
-        <a href="/app" class="btn-pc btn-pc-outline">Get started</a>
+        <a href="/setup" class="btn-pc btn-pc-outline">Get started</a>
       </div>
 
       <!-- Pro — featured -->
@@ -735,13 +740,13 @@ footer{
           <div class="pc-name" style="color:#a78bfa">Pro</div>
           <div class="pc-price grad-text"><sup style="-webkit-text-fill-color:unset;background:none">$</sup>9<sub style="-webkit-text-fill-color:unset;background:none;color:var(--muted)"> / mo</sub></div>
           <ul class="pc-features">
-            <li>All tools + Copilot</li>
-            <li>500 API calls / day</li>
-            <li>Full file editing</li>
-            <li>Run shell commands</li>
-            <li>AI Git panel</li>
+            <li>Full machine control</li>
+            <li>1000 API calls / day</li>
+            <li>Files + terminal + git</li>
+            <li>AI + Copilot tools</li>
+            <li>Runs on your own machine</li>
           </ul>
-          <a href="/app" class="btn-pc btn-pc-grad">Start Pro</a>
+          <a href="/setup" class="btn-pc btn-pc-grad">Start Pro</a>
         </div>
       </div>
 
@@ -752,11 +757,11 @@ footer{
         <ul class="pc-features">
           <li>Everything in Pro</li>
           <li>Unlimited API calls</li>
-          <li>Multi-user access</li>
-          <li>Priority support</li>
+          <li>Multi-user + multi-machine</li>
           <li>Shared workspaces</li>
+          <li>Priority support</li>
         </ul>
-        <a href="/app" class="btn-pc" style="background:rgba(6,182,212,0.15);border:1px solid rgba(6,182,212,0.3);color:#22d3ee;border-radius:8px;font-weight:700;font-size:14px;text-align:center;display:block;padding:12px;transition:background .2s" onmouseover="this.style.background='rgba(6,182,212,0.25)'" onmouseout="this.style.background='rgba(6,182,212,0.15)'">Start Team</a>
+        <a href="/setup" class="btn-pc" style="background:rgba(6,182,212,0.15);border:1px solid rgba(6,182,212,0.3);color:#22d3ee;border-radius:8px;font-weight:700;font-size:14px;text-align:center;display:block;padding:12px;transition:background .2s" onmouseover="this.style.background='rgba(6,182,212,0.25)'" onmouseout="this.style.background='rgba(6,182,212,0.15)'">Start Team</a>
       </div>
 
       <!-- Self-Hosted -->
@@ -765,13 +770,13 @@ footer{
         <div class="pc-price" style="color:#fbbf24"><sup>$</sup>49<sub> one-time</sub></div>
         <div class="pc-subprice">or $19 / month</div>
         <ul class="pc-features">
-          <li>Your own server</li>
+          <li>Run your own relay server</li>
           <li>Unlimited everything</li>
           <li>License key activation</li>
-          <li>No data leaves your machine</li>
+          <li>Monthly or lifetime</li>
           <li>All future updates</li>
         </ul>
-        <a href="/app" class="btn-pc btn-pc-amber">Buy License</a>
+        <a href="/setup" class="btn-pc btn-pc-amber">Buy License</a>
       </div>
     </div>
   </div>
@@ -831,11 +836,11 @@ footer{
       <span class="grad-text">is already in your head.</span>
     </h2>
     <p>Stop losing ideas to exhaustion. Set up in 2 minutes.</p>
-    <a href="/app" class="btn-primary" style="font-size:18px;padding:16px 40px">
+    <a href="/setup" class="btn-primary" style="font-size:18px;padding:16px 40px">
       Start free &mdash; no credit card
     </a>
     <p class="cta-note">
-      Or <a href="/app">buy a self-hosted license for $49</a>. Own it forever.
+      Or <a href="/setup">buy a self-hosted license for $49</a>. Own it forever.
     </p>
   </div>
 </section>

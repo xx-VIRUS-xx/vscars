@@ -44,6 +44,8 @@ package-lock.json
 
 # Environment
 .env
+.env.production
+.env.staging
 .env.local
 .env.*.local
 

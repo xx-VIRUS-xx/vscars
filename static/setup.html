@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VSCARS Setup Guide</title>
+<meta name="description" content="Install and connect your machine to VSCARS in minutes.">
+<style>
+:root{--bg:#0b1020;--card:#121933;--card2:#0f1530;--b:#22305f;--t:#e6ecff;--m:#9fb0de;--a:#4fd1c5;--a2:#6ee7b7;--danger:#ff7a7a}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(1000px 500px at 80% -10%,#1d2a58 0,#0b1020 55%);color:var(--t);font-family:ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.55}
+.wrap{max-width:980px;margin:0 auto;padding:32px 18px 70px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.brand{font-weight:800;letter-spacing:.4px}
+.btn{display:inline-block;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:700;border:1px solid var(--b);color:var(--t);background:var(--card2)}
+.btn.primary{background:linear-gradient(135deg,var(--a),var(--a2));color:#04161a;border:none}
+.hero{background:linear-gradient(180deg,#121b3a 0,#0f1631 100%);border:1px solid var(--b);border-radius:16px;padding:22px;margin-bottom:16px}
+.hero h1{margin:0 0 8px;font-size:29px;letter-spacing:-.6px}
+.hero p{margin:0;color:var(--m)}
+.grid{display:grid;grid-template-columns:1fr;gap:14px}
+@media(min-width:900px){.grid{grid-template-columns:1fr 1fr}}
+.card{background:var(--card);border:1px solid var(--b);border-radius:14px;padding:16px}
+.card h2{margin:0 0 8px;font-size:18px}
+.card p{margin:0 0 10px;color:var(--m)}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+pre{margin:0;background:#0a1128;border:1px solid #27335f;border-radius:10px;padding:12px;white-space:pre-wrap;word-break:break-word;color:#d9e4ff;font-size:13px}
+ol{margin:8px 0 0 18px;padding:0}
+li{margin:8px 0;color:var(--m)}
+li strong{color:var(--t)}
+.note{font-size:13px;color:var(--m)}
+.warn{border:1px solid #684647;background:#281a1f;color:#ffc6c6;padding:10px 12px;border-radius:10px;margin-top:10px}
+.kv{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.pill{font-size:12px;border:1px solid #2a3a6e;border-radius:999px;padding:4px 8px;color:#b7c7f6}
+.foot{margin-top:18px;display:flex;gap:10px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand">VSCARS Setup</div>
+    <div>
+      <a class="btn" href="/">Back to site</a>
+      <a class="btn primary" href="/app">Open App Login</a>
+    </div>
+  </div>
+
+  <section class="hero">
+    <h1>Setup first, then login and control your machine</h1>
+    <p>Free account gives access to the app and API, but remote machine control starts after you install and connect the local connector.</p>
+    <div class="kv">
+      <span class="pill">1. Install connector</span>
+      <span class="pill">2. Generate API key</span>
+      <span class="pill">3. Connect machine</span>
+      <span class="pill">4. Login and use app</span>
+    </div>
+  </section>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Step 1: Install Connector (Easy)</h2>
+      <p>Run this one command on your laptop/desktop:</p>
+      <pre id="install-command">curl -fsSL "https://your-domain/static/install-connector.sh" | bash</pre>
+      <p class="note">This installs the VSCARS connector command and validates prerequisites.</p>
+    </section>
+
+    <section class="card">
+      <h2>Step 2: Generate API Key</h2>
+      <ol>
+        <li><strong>Open the app</strong> and sign in: <a href="/app" style="color:#7ee7dc">/app</a></li>
+        <li><strong>Go to Plan &amp; Billing</strong> and click <em>Generate API Key</em> (Pro+ required for machine access).</li>
+      </ol>
+      <div class="warn">Free plan supports AI chat only. Machine control requires Pro / Team / Self-Hosted.</div>
+    </section>
+
+    <section class="card">
+      <h2>Step 3: Connect This Machine</h2>
+      <p>Initialize and start connector:</p>
+      <pre>vscars init
+# enter server URL and API key
+vscars start</pre>
+      <p class="note">Keep this running. Your machine appears in <strong>My Machines</strong> once connected.</p>
+    </section>
+
+    <section class="card">
+      <h2>Step 4: Login and Play</h2>
+      <ol>
+        <li>Open <a href="/app" style="color:#7ee7dc">/app</a></li>
+        <li>Go to <strong>My Machines</strong> and verify status is online</li>
+        <li>Run commands/files from Terminal and Files views</li>
+      </ol>
+      <div class="foot">
+        <a class="btn primary" href="/app">Login to App</a>
+        <a class="btn" href="/static/install-connector.sh">View installer script</a>
+      </div>
+    </section>
+  </div>
+</div>
+<script>
+  (function () {
+    var el = document.getElementById('install-command');
+    if (!el) return;
+    el.textContent = 'curl -fsSL "' + window.location.origin + '/static/install-connector.sh" | bash';
+  })();
+</script>
+</body>
+</html>

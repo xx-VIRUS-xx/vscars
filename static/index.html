@@ -69,6 +69,9 @@
     <input type="password" id="register-confirm"  placeholder="Confirm password" autocomplete="new-password">
     <button onclick="register()" class="btn-primary">Create Account</button>
     <p class="error-msg" id="register-error"></p>
+    <p class="muted sm" style="margin-top:10px;text-align:center">
+      Need machine access setup first? <a href="/setup" target="_blank" rel="noopener" class="auth-link">Open Setup Guide</a>
+    </p>
   </div>
 
 </div>
@@ -98,12 +101,16 @@
       style="font-size:15px">⊞</button>
     <button class="nav-item" data-view="conversations" title="Chat"
       style="font-size:14px">⊘</button>
+    <button class="nav-item" data-view="agent-inbox" title="Agent Inbox"
+      style="font-size:14px">✉</button>
     <button class="nav-item" data-view="activity"      title="Logs"
       style="font-family:var(--mono);font-size:12px;font-weight:700">≣</button>
 
     <div class="actbar-spacer"></div>
     <div class="actbar-divider"></div>
 
+    <button class="nav-item" data-view="machines" title="My Machines"
+      style="font-size:15px">⬡</button>
     <button class="nav-item" data-view="settings" title="Settings"
       style="font-size:15px">⊛</button>
     <button class="nav-item" data-view="billing"  title="Plan"
@@ -193,10 +200,10 @@
                 <span class="ac-name">Git Panel</span>
                 <span class="ac-sub">Stage &amp; commit</span>
               </button>
-              <button onclick="quickCopilotAgent()" class="action-card">
+              <button onclick="quickAskAgent()" class="action-card">
                 <span class="ac-icon">⬡</span>
-                <span class="ac-name">Copilot Agent</span>
-                <span class="ac-sub">Vibe to code</span>
+                <span class="ac-name">Ask Agent</span>
+                <span class="ac-sub">Copilot / Claude / Codex</span>
               </button>
               <button onclick="quickRun()" class="action-card">
                 <span class="ac-icon">▶</span>
@@ -390,6 +397,31 @@
         <div id="conversations-list" class="conv-list"></div>
       </div>
 
+      <!-- ─── AGENT INBOX ─── -->
+      <div id="agent-inbox-view" class="view">
+        <div class="view-head">
+          <h2>Agent Inbox</h2>
+          <div class="view-actions">
+            <button onclick="loadAgentInbox()" class="btn-sm">↻ Refresh</button>
+            <button onclick="switchView('settings')" class="btn-sm">Sessions</button>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:320px 1fr;gap:12px;min-height:58vh">
+          <div style="background:var(--g2);border:1px solid var(--b1);border-radius:12px;padding:10px;overflow:auto">
+            <div class="muted sm" style="margin-bottom:8px">Previous sessions</div>
+            <div id="agent-inbox-list"><p class="muted sm">Loading…</p></div>
+          </div>
+          <div style="background:var(--g2);border:1px solid var(--b1);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:10px;min-height:0">
+            <div id="agent-inbox-header" class="muted sm">Select a session from the left to continue.</div>
+            <div id="agent-inbox-thread" style="flex:1;overflow:auto;display:flex;flex-direction:column;gap:8px"></div>
+            <div style="display:flex;gap:8px">
+              <textarea id="agent-inbox-input" placeholder="Continue this session..." rows="3" style="flex:1"></textarea>
+              <button onclick="sendAgentInboxMessage()" class="btn-sm btn-accent" style="align-self:flex-end">Send</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- ─── ACTIVITY ─── -->
       <div id="activity-view" class="view">
         <div class="view-head">
@@ -436,12 +468,69 @@
           </section>
 
           <section class="s-group">
+            <h3>Agent Sessions</h3>
+            <p class="muted sm">Persistent AI context threads for Ask Agent. Reuse across tabs and requests.</p>
+            <div class="s-row" style="margin-top:8px">
+              <input type="text" id="new-agent-session-name" placeholder="Session name (e.g. Backend Refactor)">
+              <select id="new-agent-session-agent" style="max-width:150px">
+                <option value="copilot">Copilot</option>
+                <option value="claude">Claude</option>
+                <option value="codex">Codex</option>
+              </select>
+              <input type="text" id="new-agent-session-model" placeholder="Model (optional)" style="max-width:200px">
+              <button onclick="createAgentSession()" class="btn-sm">+ New</button>
+            </div>
+            <div id="agent-sessions-list" style="margin-top:10px"><p class="muted sm">Loading…</p></div>
+            <button onclick="loadAgentSessions()" class="btn-sm" style="margin-top:8px">↻ Refresh</button>
+          </section>
+
+          <section class="s-group">
             <h3>Appearance</h3>
             <div class="s-chips">
               <button onclick="setTheme('dark')"  class="chip" id="chip-dark">Dark</button>
               <button onclick="setTheme('light')" class="chip" id="chip-light">Light</button>
               <button onclick="setTheme('auto')"  class="chip" id="chip-auto">Auto</button>
             </div>
+          </section>
+
+          <section class="s-group">
+            <h3>Trust &amp; Safety</h3>
+            <p class="muted sm">Policy controls for command safety, approvals, and emergency stop.</p>
+            <div class="s-row" style="margin-top:8px">
+              <label class="muted sm" style="min-width:80px;display:flex;align-items:center">Profile</label>
+              <select id="trust-profile-select" style="flex:1">
+                <option value="safe">Safe</option>
+                <option value="balanced">Balanced</option>
+                <option value="power">Power</option>
+              </select>
+            </div>
+            <div style="margin-top:8px;display:grid;gap:8px">
+              <label class="muted sm"><input type="checkbox" id="trust-require-approval"> Require approval for sensitive actions</label>
+              <label class="muted sm"><input type="checkbox" id="trust-block-destructive"> Block destructive command patterns</label>
+              <label class="muted sm"><input type="checkbox" id="trust-allow-network"> Allow network commands (curl, wget, ssh)</label>
+              <label class="muted sm"><input type="checkbox" id="trust-kill-switch"> Emergency kill switch (blocks agent execution)</label>
+            </div>
+            <div style="margin-top:8px">
+              <label class="muted sm">Allowed command prefixes (optional, comma/newline)</label>
+              <textarea id="trust-allow-prefixes" rows="2" placeholder="npm run, python, pytest" style="width:100%;margin-top:6px"></textarea>
+            </div>
+            <div class="s-row" style="margin-top:8px">
+              <button onclick="saveTrustPolicy()" class="btn-sm">Save Trust Policy</button>
+              <button onclick="loadTrustPolicy()" class="btn-sm">Reload</button>
+            </div>
+            <p class="muted sm" id="trust-policy-status" style="margin-top:8px"></p>
+          </section>
+
+          <section class="s-group">
+            <h3>Pending Approvals</h3>
+            <p class="muted sm">Sensitive actions wait here until approved or rejected.</p>
+            <div id="trust-approvals-list" style="margin-top:8px"><p class="muted sm">Loading…</p></div>
+          </section>
+
+          <section class="s-group">
+            <h3>Trust Audit</h3>
+            <p class="muted sm">Recent executions, blocked actions, and approval events.</p>
+            <div id="trust-audit-list" style="margin-top:8px"><p class="muted sm">Loading…</p></div>
           </section>
 
           <section class="s-group" id="admin-mobile-link" style="display:none">
@@ -458,6 +547,27 @@
         </div>
       </div>
 
+      <!-- ─── MACHINES ─── -->
+      <div id="machines-view" class="view">
+        <div class="view-head"><h2>My Machines</h2></div>
+        <div style="max-width:560px;padding:0 4px">
+          <p style="font-size:12px;color:var(--t2);margin-bottom:14px">
+            Pro+ users connect their own laptop. Tool calls (files, terminal, git) are executed
+            on <strong>your machine</strong>, not the server.
+          </p>
+          <div style="background:var(--g2);border:1px solid var(--b1);border-radius:10px;padding:14px 16px;margin-bottom:16px">
+            <div style="font-size:12px;font-weight:600;color:var(--t1);margin-bottom:8px">Quick setup</div>
+            <code style="font-size:11px;color:var(--t2);display:block;line-height:1.8">
+              curl -fsSL &quot;https://your-domain/static/install-connector.sh&quot; | bash<br>
+              vscars init<br>
+              vscars start
+            </code>
+            <p class="muted sm" style="margin-top:8px">Need step-by-step? <a href="/setup" target="_blank" rel="noopener">Open Setup Guide</a></p>
+          </div>
+          <div id="machines-list"></div>
+        </div>
+      </div>
+
       <!-- ─── BILLING ─── -->
       <div id="billing-view" class="view">
         <div class="view-head"><h2>Plan &amp; Billing</h2></div>
@@ -465,13 +575,42 @@
         <div id="billing-status-bar" style="display:none">
           <div class="bsb-top">
             <span id="bsb-plan-label" class="bsb-plan">Free</span>
-            <span id="bsb-calls-label" class="bsb-calls">0 / 20 calls today</span>
+            <span id="bsb-calls-label" class="bsb-calls">0 / 50 calls today</span>
           </div>
           <div class="usage-track"><div id="usage-fill" class="usage-fill" style="width:0%"></div></div>
         </div>
 
         <!-- Rendered by _renderPricingCards() in script.js -->
         <div id="pricing-cards" class="pricing-grid"></div>
+
+        <!-- CLI API KEY SECTION -->
+        <div class="s-group" id="api-key-section" style="max-width:480px;display:none">
+          <h3>CLI API Key</h3>
+          <p class="muted sm" style="margin-bottom:10px">Use this key with <code>vscars init</code> to connect your machine.</p>
+          <div id="api-key-display" style="display:none;margin-bottom:10px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <input type="text" id="api-key-value" readonly style="flex:1;font-family:var(--mono);font-size:12px;background:var(--g2);border:1px solid var(--b1);border-radius:8px;padding:8px 10px;color:var(--t1)" value="">
+              <button onclick="copyApiKey()" style="background:var(--g3);border:1px solid var(--b1);border-radius:8px;padding:8px 12px;color:var(--t1);cursor:pointer;font-size:12px">Copy</button>
+            </div>
+            <p class="muted sm" style="margin-top:6px;color:#f87171">⚠ Save this key — it won't be shown again after you close this page.</p>
+          </div>
+          <div id="api-key-has-key" style="display:none;margin-bottom:10px">
+            <p style="font-size:13px;color:var(--t2)">✅ API key is set. Regenerate to get a new one (this will disconnect existing machines).</p>
+          </div>
+          <div id="api-key-no-key" style="display:none;margin-bottom:10px">
+            <p style="font-size:13px;color:var(--t2)">No API key yet. Generate one to use the vscars CLI.</p>
+          </div>
+          <button onclick="generateApiKey()" id="api-key-btn" style="background:var(--a);color:#000;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer">Generate API Key</button>
+          <div style="margin-top:14px;background:var(--g2);border:1px solid var(--b1);border-radius:10px;padding:12px 14px">
+            <div style="font-size:11px;font-weight:600;color:var(--t2);margin-bottom:6px">Install on your machine</div>
+            <code style="font-size:11px;color:var(--t1);line-height:2;display:block">
+              curl -fsSL &quot;https://your-domain/static/install-connector.sh&quot; | bash<br>
+              vscars init<br>
+              vscars start
+            </code>
+            <p class="muted sm" style="margin-top:8px">Replace <code>https://your-domain</code> with your VSCARS URL.</p>
+          </div>
+        </div>
 
         <div class="s-group" id="license-section" style="max-width:480px">
           <h3>Activate License Key</h3>
@@ -546,7 +685,9 @@
     <button class="mob-drawer-item nav-item" data-view="workflows">⬡<span>Workflows</span></button>
     <button class="mob-drawer-item nav-item" data-view="file-browser">⊞<span>Files</span></button>
     <button class="mob-drawer-item nav-item" data-view="conversations">⊘<span>AI Chat</span></button>
+    <button class="mob-drawer-item nav-item" data-view="agent-inbox">✉<span>Agent Inbox</span></button>
     <button class="mob-drawer-item nav-item" data-view="activity">≣<span>Activity</span></button>
+    <button class="mob-drawer-item nav-item" data-view="machines">⬡<span>Machines</span></button>
     <button class="mob-drawer-item nav-item" data-view="settings">⊛<span>Settings</span></button>
     <button class="mob-drawer-item nav-item" data-view="billing">◬<span>Plan</span></button>
   </div>
@@ -611,6 +752,21 @@
   </div>
 </div>
 
-<script src="/static/script.js?v=14.9"></script>
+<!-- ── RESET PASSWORD MODAL ── -->
+<div id="reset-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeResetModal()">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-title">Reset Password</div>
+    <p class="muted sm" style="margin-bottom:12px">Enter your new password.</p>
+    <input type="password" id="reset-new-password" placeholder="New password" autocomplete="new-password">
+    <input type="password" id="reset-confirm-password" placeholder="Confirm password" autocomplete="new-password" style="margin-top:8px">
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button onclick="submitResetPassword()" class="btn-primary" style="flex:1">Update</button>
+      <button onclick="closeResetModal()" class="btn-secondary">Cancel</button>
+    </div>
+    <p id="reset-status" class="sm" style="margin-top:10px;color:var(--t2)"></p>
+  </div>
+</div>
+
+<script src="/static/script.js?v=15.9"></script>
 </body>
 </html>

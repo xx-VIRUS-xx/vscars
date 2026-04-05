@@ -3,6 +3,7 @@ import os
 import platform
 import re as _re
 import shlex
+import inspect
 from pathlib import Path
 from typing import Optional
 import signal
@@ -795,36 +796,30 @@ class VSCodeTools:
             system = platform.system()
             node = platform.node()
             python_ver = platform.python_version()
-            
-            # Check if VS Code CLI is available
-            vscode_check = subprocess.run(
-                ["code", "--version"], capture_output=True, text=True, timeout=5
-            )
-            vscode_ver = vscode_check.stdout.split('\n')[0] if vscode_check.returncode == 0 else "Not found"
-            
-            # Check git
-            git_check = subprocess.run(
-                ["git", "--version"], capture_output=True, text=True, timeout=5
-            )
-            git_ver = git_check.stdout.strip() if git_check.returncode == 0 else "Not found"
-            
-            # Check node
-            node_check = subprocess.run(
-                ["node", "--version"], capture_output=True, text=True, timeout=5
-            )
-            node_ver = node_check.stdout.strip() if node_check.returncode == 0 else "Not found"
-            
-            # Check Copilot CLI
-            copilot_check = subprocess.run(
-                ["copilot", "--version"], capture_output=True, text=True, timeout=5
-            )
-            copilot_ver = copilot_check.stdout.strip() if copilot_check.returncode == 0 else "Not found"
-            
-            # Check gh CLI
-            gh_check = subprocess.run(
-                ["gh", "--version"], capture_output=True, text=True, timeout=5
-            )
-            gh_ver = gh_check.stdout.split('\n')[0].strip() if gh_check.returncode == 0 else "Not found"
+
+            def _safe_version(cmd_args, first_line=False):
+                try:
+                    check = subprocess.run(
+                        cmd_args, capture_output=True, text=True, timeout=5
+                    )
+                    if check.returncode != 0:
+                        return "Not found"
+                    out = check.stdout.strip()
+                    if not out:
+                        return "Not found"
+                    return out.split('\n')[0].strip() if first_line else out
+                except subprocess.TimeoutExpired:
+                    return "Timed out"
+                except FileNotFoundError:
+                    return "Not found"
+                except Exception:
+                    return "Unavailable"
+
+            vscode_ver = _safe_version(["code", "--version"], first_line=True)
+            git_ver = _safe_version(["git", "--version"])
+            node_ver = _safe_version(["node", "--version"])
+            copilot_ver = _safe_version(["copilot", "--version"])
+            gh_ver = _safe_version(["gh", "--version"], first_line=True)
             
             # Disk space
             disk = subprocess.run(
@@ -1073,6 +1068,47 @@ class VSCodeTools:
             return f"❌ Copilot Agent timed out (>{timeout}s). Try a simpler prompt or increase COMMAND_TIMEOUT."
         except Exception as e:
             return f"❌ Error running Copilot Agent: {str(e)}"
+
+    @staticmethod
+    def ask_agent(
+        prompt: str,
+        agent: str = "copilot",
+        project_path: str = "",
+        model: str = "",
+        allow_tools: str = "all",
+        **kwargs,
+    ) -> str:
+        """Unified agent entrypoint with selectable persona.
+        agent: copilot | claude | codex
+        model: optional explicit model override
+        """
+        agent_key = (agent or "copilot").strip().lower()
+        default_models = {
+            "copilot": "gpt-5.2",
+            "claude": "claude-sonnet-4.6",
+            "codex": "gpt-5.3-codex",
+        }
+        if agent_key not in default_models:
+            agent_key = "copilot"
+
+        selected_model = (model or "").strip() or default_models[agent_key]
+        result = VSCodeTools.copilot_agent(
+            prompt=prompt,
+            project_path=project_path,
+            model=selected_model,
+            allow_tools=allow_tools,
+        )
+
+        agent_label = {
+            "copilot": "Copilot Agent",
+            "claude": "Claude Code",
+            "codex": "Codex",
+        }[agent_key]
+        header = f"🧭 Agent: {agent_label}\n🎯 Requested Model: {selected_model}\n\n"
+        if isinstance(result, str) and result.startswith("❌"):
+            # Preserve error semantics for API success detection logic
+            return f"❌ Agent execution failed\n{header}{result}"
+        return f"{header}{result}"
     
     @staticmethod
     def browse_directory(dirpath: str = "", depth: int = 3, show_hidden: bool = False) -> str:
@@ -1321,6 +1357,12 @@ TOOLS = [
         "handler": VSCodeTools.copilot_agent
     },
     {
+        "name": "ask_agent",
+        "description": "🧭 Ask Agent — switch between Copilot, Claude Code, and Codex",
+        "required_permission": "copilot",
+        "handler": VSCodeTools.ask_agent
+    },
+    {
         "name": "browse_directory",
         "description": "📂 Visual directory tree browser with project detection",
         "required_permission": "view",
@@ -1347,6 +1389,17 @@ def execute_tool(tool_name: str, **kwargs) -> str:
         return f"❌ Unknown tool: {tool_name}"
     
     try:
-        return tool["handler"](**kwargs)
+        handler = tool["handler"]
+        sig = inspect.signature(handler)
+        accepts_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        if accepts_var_kw:
+            filtered = kwargs
+        else:
+            allowed = {
+                name for name, p in sig.parameters.items()
+                if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+            }
+            filtered = {k: v for k, v in kwargs.items() if k in allowed}
+        return handler(**filtered)
     except Exception as e:
         return f"❌ Error: {str(e)}"

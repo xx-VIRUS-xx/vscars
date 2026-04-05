@@ -29,6 +29,13 @@ setup_python() {
     log "Python deps installed."
 }
 
+check_prod_env_safety() {
+    # Prevent accidentally deploying local/dev .env into production.
+    if [[ "$MODE" == "server" && -f "$PROJECT_DIR/.env" ]]; then
+        err "Refusing server deploy: '$PROJECT_DIR/.env' exists. Remove it and use system-level env vars (EnvironmentFile) instead."
+    fi
+}
+
 check_app_starts() {
     log "Testing app startup..."
     cd "$PROJECT_DIR"
@@ -142,6 +149,7 @@ echo "=========================================="
 echo ""
 
 setup_python
+check_prod_env_safety
 check_app_starts
 
 case "$MODE" in

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
-from app.database import init_db, get_db, User, UserPermission, AccessRequest, CommandLog, ConversationHistory, PasswordResetToken, IdeaNote, SavedWorkflow, UserSession
+from app.database import init_db, get_db, SessionLocal, User, UserPermission, AccessRequest, CommandLog, ConversationHistory, PasswordResetToken, IdeaNote, SavedWorkflow, UserSession, RegisteredMachine, TrustPolicy, ToolApproval, AgentTask, AgentSession, AgentSessionMessage
 from app.git_ops import git_status, git_diff, git_stage, git_unstage, git_commit, git_push, git_log, git_branches, git_ai_commit_message
 import hashlib as _hashlib
 from app.schemas import (
@@ -14,24 +14,33 @@ from app.schemas import (
 )
 from app.auth import (
     hash_password, verify_password, create_access_token,
-    get_current_user, get_superuser, check_permission
+    get_current_user, get_superuser, check_permission, decode_token
 )
 from app.config import (
     ACCESS_TOKEN_EXPIRE_MINUTES, SUPERUSER_PHONE, STATIC_DIR,
-    MAX_REQUEST_SIZE, RATE_LIMIT_LOGIN, RATE_LIMIT_API
+    MAX_REQUEST_SIZE, RATE_LIMIT_LOGIN, RATE_LIMIT_API, APP_BASE_URL
 )
 from app.tools import execute_tool, TOOLS, _reset_allowed_roots
+from app import relay as _relay
 from app.utils.qr_code import create_qr_auth_token
 from app.utils.ngrok_helper import NgrokManager
 from app.billing.routes import billing_router
 from app.email import send_welcome, send_password_reset
 from app.billing.plan_limits import apply_plan_to_permissions, enforce_plan_limits
+from app.trust import (
+    DEFAULT_POLICY,
+    normalize_policy_row,
+    apply_profile_defaults,
+    evaluate_request,
+    request_fingerprint,
+)
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import os
 import json
 import re
+import threading
 
 # Initialize database
 init_db()
@@ -218,9 +227,25 @@ async def login(request: Request, user_data: UserLogin, db: Session = Depends(ge
     }
 
 @app.get("/api/auth/me", response_model=UserResponse)
-async def get_me(current_user: User = Depends(get_current_user)):
+async def get_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Get current user info"""
-    return current_user
+    perm = db.query(UserPermission).filter(UserPermission.user_id == current_user.id).first()
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "device_id": current_user.device_id,
+        "is_superuser": current_user.is_superuser,
+        "is_active": current_user.is_active,
+        "plan": current_user.plan or "free",
+        "can_run_copilot": bool(perm.can_run_copilot) if perm else False,
+        "can_run_commands": bool(perm.can_run_commands) if perm else False,
+        "can_edit_files": bool(perm.can_edit_files) if perm else False,
+        "can_view_files": bool(perm.can_view_files) if perm else False,
+        "daily_api_calls": current_user.daily_api_calls or 0,
+        "trial_ends_at": current_user.trial_ends_at,
+        "created_at": current_user.created_at,
+    }
 
 @app.post("/api/auth/logout")
 async def logout(request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -441,6 +466,163 @@ async def update_user_permissions(
 
 # ==================== TOOL ROUTES ====================
 
+def _get_or_create_trust_policy(user_id: int, db: Session) -> TrustPolicy:
+    policy_row = db.query(TrustPolicy).filter(TrustPolicy.user_id == user_id).first()
+    if policy_row:
+        return policy_row
+    policy_row = TrustPolicy(
+        user_id=user_id,
+        profile=DEFAULT_POLICY["profile"],
+        require_approval=DEFAULT_POLICY["require_approval"],
+        block_destructive=DEFAULT_POLICY["block_destructive"],
+        allow_network=DEFAULT_POLICY["allow_network"],
+        kill_switch=DEFAULT_POLICY["kill_switch"],
+        allowed_command_prefixes=DEFAULT_POLICY["allowed_command_prefixes"],
+        updated_at=datetime.utcnow(),
+    )
+    db.add(policy_row)
+    db.commit()
+    db.refresh(policy_row)
+    return policy_row
+
+_ASYNC_AGENT_TOOLS = {"ask_agent", "copilot_agent"}
+_TOOL_CONTROL_FIELDS = {"async", "wait", "agent_session_id", "continue_session", "session_name"}
+
+def _ensure_copilot_permission(current_user: User, db: Session):
+    """Raise 403 when user cannot run copilot/agent tools."""
+    if current_user.is_superuser:
+        return
+    perm = db.query(UserPermission).filter(UserPermission.user_id == current_user.id).first()
+    if not perm or not perm.can_run_copilot:
+        raise HTTPException(status_code=403, detail="Copilot permission required")
+
+
+def _crawler_url_from_request(request: Request, task_id: int) -> str:
+    base = str(request.base_url).rstrip("/")
+    return f"{base}/api/agent/tasks/{task_id}"
+
+
+def _ensure_agent_session(
+    db: Session,
+    user_id: int,
+    requested_session_id,
+    agent: str,
+    model: str,
+    project_path: str,
+    allow_tools: str,
+    session_name: str = "",
+):
+    session = None
+    if requested_session_id not in (None, "", 0, "0"):
+        try:
+            sid = int(requested_session_id)
+            session = db.query(AgentSession).filter(
+                AgentSession.id == sid,
+                AgentSession.user_id == user_id,
+                AgentSession.is_active == True
+            ).first()
+        except Exception:
+            session = None
+
+    if not session:
+        session = AgentSession(
+            user_id=user_id,
+            name=(session_name or "").strip() or f"{(agent or 'copilot').strip().lower()} session",
+            agent=(agent or "copilot").strip().lower(),
+            model=(model or "").strip() or None,
+            project_path=(project_path or "").strip() or None,
+            allow_tools=(allow_tools or "all").strip() or "all",
+            is_active=True,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+    return session
+
+
+def _build_session_prompt(db: Session, session_id: int, user_prompt: str, max_msgs: int = 8) -> str:
+    messages = db.query(AgentSessionMessage).filter(
+        AgentSessionMessage.session_id == session_id
+    ).order_by(AgentSessionMessage.created_at.desc()).limit(max(1, max_msgs)).all()
+    if not messages:
+        return user_prompt
+
+    lines = ["Conversation context (most recent first):"]
+    for m in reversed(messages):
+        role = "User" if m.role == "user" else ("Assistant" if m.role == "assistant" else "System")
+        text = (m.content or "").strip()
+        if text:
+            lines.append(f"{role}: {text}")
+    lines.append("")
+    lines.append(f"Current user request: {user_prompt}")
+    return "\n".join(lines)
+
+
+def _run_agent_task(task_id: int):
+    """Background runner for long agent jobs."""
+    db = SessionLocal()
+    try:
+        task = db.query(AgentTask).filter(AgentTask.id == task_id).first()
+        if not task:
+            return
+
+        task.status = "running"
+        task.started_at = datetime.utcnow()
+        db.commit()
+
+        params = json.loads(task.input_params or "{}")
+        result = execute_tool(task.tool_name, **params)
+        success = not str(result).startswith("❌")
+
+        task.status = "completed" if success else "failed"
+        task.result = str(result)[:20000]
+        task.error = None if success else str(result)[:20000]
+        task.finished_at = datetime.utcnow()
+        db.commit()
+
+        if task.agent_session_id:
+            session = db.query(AgentSession).filter(
+                AgentSession.id == task.agent_session_id,
+                AgentSession.user_id == task.user_id
+            ).first()
+            if session:
+                assistant_msg = AgentSessionMessage(
+                    session_id=session.id,
+                    role="assistant",
+                    content=(task.result or task.error or "")[:12000],
+                )
+                session.updated_at = datetime.utcnow()
+                session.last_task_id = task.id
+                db.add(assistant_msg)
+                db.commit()
+
+        log_entry = CommandLog(
+            user_id=task.user_id,
+            tool_name=task.tool_name,
+            action=f"Async task #{task.id} finished",
+            input_params=task.input_params,
+            result=(task.result or task.error or "")[:500],
+            status="success" if success else "error",
+            device_id="background-worker",
+        )
+        db.add(log_entry)
+        db.commit()
+    except Exception as e:
+        try:
+            task = db.query(AgentTask).filter(AgentTask.id == task_id).first()
+            if task:
+                task.status = "failed"
+                task.error = f"❌ Background task error: {str(e)}"[:20000]
+                task.finished_at = datetime.utcnow()
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
 @app.get("/api/tools")
 async def list_tools(current_user: User = Depends(get_current_user)):
     """List available tools with user's permissions"""
@@ -457,6 +639,7 @@ async def list_tools(current_user: User = Depends(get_current_user)):
 
 @app.post("/api/tools/execute", response_model=ToolResult)
 async def execute_tool_endpoint(
+    request: Request,
     tool_input: dict,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -506,11 +689,245 @@ async def execute_tool_endpoint(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission denied for {tool_name}"
             )
-    
-    # Execute tool
+
+    params = {
+        k: v for k, v in tool_input.items()
+        if k != "tool" and k not in _TOOL_CONTROL_FIELDS and v is not None
+    }
+
+    # Trust policy checks: kill switch, command guardrails, approval flow
+    policy_row = _get_or_create_trust_policy(current_user.id, db)
+    policy = apply_profile_defaults(normalize_policy_row(policy_row))
+    allowed, blocked_reason, sensitive, sensitivity_reason = evaluate_request(policy, tool_name, params)
+
+    if not allowed:
+        blocked_msg_map = {
+            "kill_switch_enabled": "Execution blocked: emergency kill switch is enabled.",
+            "blocked_destructive_pattern": "Execution blocked by destructive-command protection policy.",
+            "network_command_blocked": "Execution blocked: network commands are disabled in your policy.",
+            "command_not_in_allowlist": "Execution blocked: command is not in your allowlist.",
+        }
+        blocked_msg = blocked_msg_map.get(blocked_reason, "Execution blocked by trust policy.")
+        log_entry = CommandLog(
+            user_id=current_user.id,
+            tool_name=tool_name,
+            action=f"Blocked by trust policy ({blocked_reason})",
+            input_params=json.dumps(params),
+            result=blocked_msg,
+            status="blocked",
+            device_id=current_user.device_id,
+        )
+        db.add(log_entry)
+        db.commit()
+        return {
+            "success": False,
+            "tool": tool_name,
+            "error": blocked_msg,
+        }
+
+    approved_request = None
+    if policy.get("require_approval", True) and sensitive:
+        fp = request_fingerprint(current_user.id, tool_name, params)
+        approved_request = db.query(ToolApproval).filter(
+            ToolApproval.user_id == current_user.id,
+            ToolApproval.request_fingerprint == fp,
+            ToolApproval.status == "approved",
+            ToolApproval.consumed_at.is_(None)
+        ).order_by(ToolApproval.created_at.desc()).first()
+
+        if not approved_request:
+            pending = db.query(ToolApproval).filter(
+                ToolApproval.user_id == current_user.id,
+                ToolApproval.request_fingerprint == fp,
+                ToolApproval.status == "pending"
+            ).order_by(ToolApproval.created_at.desc()).first()
+
+            if not pending:
+                pending = ToolApproval(
+                    user_id=current_user.id,
+                    tool_name=tool_name,
+                    input_params=json.dumps(params),
+                    request_fingerprint=fp,
+                    sensitivity_reason=sensitivity_reason,
+                    status="pending",
+                )
+                db.add(pending)
+                db.commit()
+                db.refresh(pending)
+
+            log_entry = CommandLog(
+                user_id=current_user.id,
+                tool_name=tool_name,
+                action=f"Approval required ({sensitivity_reason})",
+                input_params=json.dumps(params),
+                result=f"Pending approval #{pending.id}.",
+                status="pending_approval",
+                device_id=current_user.device_id,
+            )
+            db.add(log_entry)
+            db.commit()
+            return {
+                "success": False,
+                "tool": tool_name,
+                "error": f"Approval required before execution. Request #{pending.id} is pending.",
+                "approval_required": True,
+                "approval_id": pending.id,
+            }
+
+        approved_request.status = "consumed"
+        approved_request.consumed_at = datetime.utcnow()
+        db.commit()
+
+    # Long-running agent tools: run asynchronously by default and return tracker URL
+    raw_async = tool_input.get("async", True)
+    raw_wait = tool_input.get("wait", False)
+    continue_session_raw = tool_input.get("continue_session", True)
+    continue_session = continue_session_raw if isinstance(continue_session_raw, bool) else str(continue_session_raw).strip().lower() in {"1", "true", "yes", "on"}
+    run_async = raw_async if isinstance(raw_async, bool) else str(raw_async).strip().lower() in {"1", "true", "yes", "on"}
+    wait_for_result = raw_wait if isinstance(raw_wait, bool) else str(raw_wait).strip().lower() in {"1", "true", "yes", "on"}
+    if tool_name in _ASYNC_AGENT_TOOLS and run_async and not wait_for_result:
+        agent_session = None
+        if tool_name == "ask_agent":
+            user_prompt = str(params.get("prompt", "") or "").strip()
+            if user_prompt:
+                agent_session = _ensure_agent_session(
+                    db=db,
+                    user_id=current_user.id,
+                    requested_session_id=tool_input.get("agent_session_id"),
+                    agent=str(params.get("agent", "copilot") or "copilot"),
+                    model=str(params.get("model", "") or ""),
+                    project_path=str(params.get("project_path", "") or ""),
+                    allow_tools=str(params.get("allow_tools", "all") or "all"),
+                    session_name=str(tool_input.get("session_name", "") or ""),
+                )
+                # Session is source of truth for persona/model so execution
+                # does not drift back to a default agent.
+                params["agent"] = agent_session.agent or str(params.get("agent", "copilot") or "copilot")
+                if agent_session.model:
+                    params["model"] = agent_session.model
+                if agent_session.project_path:
+                    params["project_path"] = agent_session.project_path
+                if agent_session.allow_tools:
+                    params["allow_tools"] = agent_session.allow_tools
+                session_prompt = _build_session_prompt(db, agent_session.id, user_prompt) if continue_session else user_prompt
+                params["prompt"] = session_prompt
+                db.add(AgentSessionMessage(session_id=agent_session.id, role="user", content=user_prompt[:8000]))
+                agent_session.updated_at = datetime.utcnow()
+                db.commit()
+
+        task = AgentTask(
+            user_id=current_user.id,
+            tool_name=tool_name,
+            input_params=json.dumps(params),
+            status="queued",
+            created_at=datetime.utcnow(),
+            agent_session_id=agent_session.id if agent_session else None,
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        threading.Thread(target=_run_agent_task, args=(task.id,), daemon=True).start()
+
+        crawl_url = _crawler_url_from_request(request, task.id)
+        return {
+            "success": True,
+            "tool": tool_name,
+            "status": "queued",
+            "task_id": task.id,
+            "agent_session_id": task.agent_session_id,
+            "crawler_url": crawl_url,
+            "result": (
+                f"⏳ Task queued: #{task.id}\n"
+                f"Track progress: {crawl_url}\n"
+                f"You will get a notification when the task finishes."
+            ),
+        }
+
+    # Permissions that require the tool to run on the user's own machine
+    _MACHINE_PERMS = {"view", "edit", "commands"}
+
+    # Non-superusers must proxy machine-required tools through their CLI agent.
+    # Superusers (= the host owner) still run locally as before.
+    if not current_user.is_superuser and tool["required_permission"] in _MACHINE_PERMS:
+        if not _relay.is_connected(current_user.id):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "message": (
+                        "No machine connected. Install the vscars CLI on your laptop "
+                        "and run `vscars start` to connect it."
+                    ),
+                    "code": "no_machine",
+                    "install_cmd": f"curl -fsSL {APP_BASE_URL}/static/install-connector.sh | bash && vscars init",
+                    "setup_url": f"{APP_BASE_URL}/setup",
+                },
+            )
+        machine_id = tool_input.get("machine_id")  # optional: target a specific machine
+        try:
+            result_data = await _relay.call_tool(
+                current_user.id, machine_id, tool_name, params
+            )
+        except ConnectionError as e:
+            raise HTTPException(status_code=503, detail={"message": str(e), "code": "no_machine"})
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail={"message": "Machine did not respond in time.", "code": "timeout"})
+        success = result_data.get("success", True)
+        result_str = result_data.get("result", "")
+        log_entry = CommandLog(
+            user_id=current_user.id, tool_name=tool_name,
+            action=f"Relayed {tool_name}",
+            input_params=json.dumps(params), result=str(result_str)[:500],
+            status="success" if success else "error", device_id=current_user.device_id,
+        )
+        db.add(log_entry)
+        db.commit()
+        return {"success": success, "tool": tool_name, "result": result_str}
+
+    # Execute tool (superuser: runs locally on host)
     try:
-        params = {k: v for k, v in tool_input.items() if k != "tool" and v is not None}
+        params = {
+            k: v for k, v in tool_input.items()
+            if k != "tool" and k not in _TOOL_CONTROL_FIELDS and v is not None
+        }
+        sync_agent_session = None
+        if tool_name == "ask_agent":
+            user_prompt = str(params.get("prompt", "") or "").strip()
+            if user_prompt:
+                sync_agent_session = _ensure_agent_session(
+                    db=db,
+                    user_id=current_user.id,
+                    requested_session_id=tool_input.get("agent_session_id"),
+                    agent=str(params.get("agent", "copilot") or "copilot"),
+                    model=str(params.get("model", "") or ""),
+                    project_path=str(params.get("project_path", "") or ""),
+                    allow_tools=str(params.get("allow_tools", "all") or "all"),
+                    session_name=str(tool_input.get("session_name", "") or ""),
+                )
+                # Session is source of truth for persona/model so execution
+                # does not drift back to a default agent.
+                params["agent"] = sync_agent_session.agent or str(params.get("agent", "copilot") or "copilot")
+                if sync_agent_session.model:
+                    params["model"] = sync_agent_session.model
+                if sync_agent_session.project_path:
+                    params["project_path"] = sync_agent_session.project_path
+                if sync_agent_session.allow_tools:
+                    params["allow_tools"] = sync_agent_session.allow_tools
+                if continue_session:
+                    params["prompt"] = _build_session_prompt(db, sync_agent_session.id, user_prompt)
+                db.add(AgentSessionMessage(session_id=sync_agent_session.id, role="user", content=user_prompt[:8000]))
+                sync_agent_session.updated_at = datetime.utcnow()
+                db.commit()
+
         result = execute_tool(tool_name, **params)
+        if sync_agent_session:
+            db.add(AgentSessionMessage(
+                session_id=sync_agent_session.id,
+                role="assistant",
+                content=str(result)[:12000]
+            ))
+            sync_agent_session.updated_at = datetime.utcnow()
+            db.commit()
         
         # Log the command execution
         success = not result.startswith("❌")
@@ -543,7 +960,8 @@ async def execute_tool_endpoint(
         return {
             "success": success,
             "tool": tool_name,
-            "result": result
+            "result": result,
+            "agent_session_id": sync_agent_session.id if sync_agent_session else None,
         }
     except Exception as e:
         # Log the error
@@ -564,6 +982,64 @@ async def execute_tool_endpoint(
             "tool": tool_name,
             "error": str(e)
         }
+
+
+@app.post("/api/execute-tool", response_model=ToolResult)
+async def execute_tool_endpoint_legacy(
+    request: Request,
+    tool_input: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Legacy alias for older clients: /api/execute-tool -> /api/tools/execute"""
+    return await execute_tool_endpoint(
+        request=request,
+        tool_input=tool_input,
+        current_user=current_user,
+        db=db,
+    )
+
+
+@app.post("/api/chat", response_model=ToolResult)
+async def chat_endpoint_legacy(
+    request: Request,
+    data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Legacy chat alias: maps /api/chat payloads to ask_copilot tool execution."""
+    data = data or {}
+    query = str(data.get("query", "") or data.get("prompt", "") or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query or prompt is required")
+
+    tool_input = {"tool": "ask_copilot", "query": query}
+    model = str(data.get("model", "") or "").strip()
+    if model:
+        tool_input["model"] = model
+
+    return await execute_tool_endpoint(
+        request=request,
+        tool_input=tool_input,
+        current_user=current_user,
+        db=db,
+    )
+
+
+@app.post("/api/copilot/chat", response_model=ToolResult)
+async def copilot_chat_endpoint_legacy(
+    request: Request,
+    data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Legacy alias for older clients expecting /api/copilot/chat."""
+    return await chat_endpoint_legacy(
+        request=request,
+        data=data,
+        current_user=current_user,
+        db=db,
+    )
 
 @app.get("/api/tools/history")
 async def get_command_history(
@@ -590,6 +1066,373 @@ async def get_command_history(
             }
             for log in logs
         ]
+    }
+
+
+@app.get("/api/agent/tasks")
+async def list_agent_tasks(
+    request: Request,
+    status_filter: str = "",
+    limit: int = 30,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    q = db.query(AgentTask).filter(AgentTask.user_id == current_user.id)
+    if status_filter:
+        q = q.filter(AgentTask.status == status_filter)
+    tasks = q.order_by(AgentTask.created_at.desc()).limit(max(1, min(limit, 100))).all()
+    return {
+        "tasks": [
+            {
+                "id": t.id,
+                "tool": t.tool_name,
+                "agent_session_id": t.agent_session_id,
+                "status": t.status,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "started_at": t.started_at.isoformat() if t.started_at else None,
+                "finished_at": t.finished_at.isoformat() if t.finished_at else None,
+                "crawler_url": _crawler_url_from_request(request, t.id),
+            }
+            for t in tasks
+        ]
+    }
+
+
+@app.get("/api/agent/tasks/{task_id}")
+async def get_agent_task(
+    request: Request,
+    task_id: int,
+    db: Session = Depends(get_db),
+):
+    # Graceful auth handling: direct-opened links (no auth header) should not
+    # spam 401s; return a safe payload the UI can handle.
+    token = None
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth.split(" ", 1)[1].strip()
+    if not token:
+        return {
+            "id": task_id,
+            "tool": None,
+            "agent_session_id": None,
+            "status": "auth_required",
+            "result": None,
+            "error": "Authentication required. Open this from the app session.",
+            "created_at": None,
+            "started_at": None,
+            "finished_at": None,
+            "crawler_url": _crawler_url_from_request(request, task_id),
+        }
+
+    try:
+        payload = decode_token(token)
+        username = payload.get("sub")
+        current_user = db.query(User).filter(User.username == username, User.is_active == True).first()
+    except Exception:
+        current_user = None
+
+    if not current_user:
+        return {
+            "id": task_id,
+            "tool": None,
+            "agent_session_id": None,
+            "status": "auth_required",
+            "result": None,
+            "error": "Authentication required. Open this from the app session.",
+            "created_at": None,
+            "started_at": None,
+            "finished_at": None,
+            "crawler_url": _crawler_url_from_request(request, task_id),
+        }
+
+    task = db.query(AgentTask).filter(
+        AgentTask.id == task_id,
+        AgentTask.user_id == current_user.id
+    ).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return {
+        "id": task.id,
+        "tool": task.tool_name,
+        "agent_session_id": task.agent_session_id,
+        "status": task.status,
+        "result": task.result,
+        "error": task.error,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "finished_at": task.finished_at.isoformat() if task.finished_at else None,
+        "crawler_url": _crawler_url_from_request(request, task.id),
+    }
+
+
+@app.get("/api/agent/notifications")
+async def get_agent_notifications(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    tasks = db.query(AgentTask).filter(
+        AgentTask.user_id == current_user.id,
+        AgentTask.notified == False,
+        AgentTask.status.in_(["completed", "failed"])
+    ).order_by(AgentTask.finished_at.desc()).limit(20).all()
+
+    items = []
+    for t in tasks:
+        ok = t.status == "completed"
+        items.append({
+            "task_id": t.id,
+            "tool": t.tool_name,
+            "agent_session_id": t.agent_session_id,
+            "status": t.status,
+            "message": (
+                f"Task #{t.id} finished successfully"
+                if ok else f"Task #{t.id} finished with errors"
+            ),
+            "crawler_url": _crawler_url_from_request(request, t.id),
+            "finished_at": t.finished_at.isoformat() if t.finished_at else None,
+        })
+        t.notified = True
+    db.commit()
+    return {"notifications": items}
+
+
+@app.get("/api/agent/sessions")
+async def list_agent_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_copilot_permission(current_user, db)
+    sessions = db.query(AgentSession).filter(
+        AgentSession.user_id == current_user.id,
+        AgentSession.is_active == True
+    ).order_by(AgentSession.updated_at.desc()).limit(100).all()
+    out = []
+    for s in sessions:
+        last_msg = db.query(AgentSessionMessage).filter(
+            AgentSessionMessage.session_id == s.id
+        ).order_by(AgentSessionMessage.created_at.desc()).first()
+        msg_count = db.query(AgentSessionMessage).filter(
+            AgentSessionMessage.session_id == s.id
+        ).count()
+        out.append({
+            "id": s.id,
+            "name": s.name,
+            "agent": s.agent,
+            "model": s.model,
+            "project_path": s.project_path,
+            "allow_tools": s.allow_tools,
+            "last_task_id": s.last_task_id,
+            "message_count": msg_count,
+            "last_message_preview": (last_msg.content[:160] if (last_msg and last_msg.content) else None),
+            "last_message_role": (last_msg.role if last_msg else None),
+            "last_message_at": (last_msg.created_at.isoformat() if (last_msg and last_msg.created_at) else None),
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+        })
+    return {"sessions": out}
+
+
+@app.post("/api/agent/sessions")
+async def create_agent_session(
+    data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_copilot_permission(current_user, db)
+    data = data or {}
+    agent = (str(data.get("agent", "copilot") or "copilot").strip().lower())
+    if agent not in {"copilot", "claude", "codex"}:
+        agent = "copilot"
+    s = AgentSession(
+        user_id=current_user.id,
+        name=(str(data.get("name", "") or "").strip() or "agent session"),
+        agent=agent,
+        model=(str(data.get("model", "") or "").strip() or None),
+        project_path=(str(data.get("project_path", "") or "").strip() or None),
+        allow_tools=(str(data.get("allow_tools", "all") or "all").strip() or "all"),
+        is_active=True,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return {"id": s.id, "name": s.name, "agent": s.agent, "model": s.model, "project_path": s.project_path, "allow_tools": s.allow_tools}
+
+
+@app.get("/api/agent/sessions/{session_id}")
+async def get_agent_session_messages(
+    session_id: int,
+    limit: int = 40,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_copilot_permission(current_user, db)
+    s = db.query(AgentSession).filter(
+        AgentSession.id == session_id,
+        AgentSession.user_id == current_user.id,
+        AgentSession.is_active == True
+    ).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    msgs = db.query(AgentSessionMessage).filter(
+        AgentSessionMessage.session_id == s.id
+    ).order_by(AgentSessionMessage.created_at.desc()).limit(max(1, min(limit, 200))).all()
+
+    return {
+        "session": {
+            "id": s.id,
+            "name": s.name,
+            "agent": s.agent,
+            "model": s.model,
+            "project_path": s.project_path,
+            "allow_tools": s.allow_tools,
+            "last_task_id": s.last_task_id,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+        },
+        "messages": [
+            {
+                "id": m.id,
+                "role": m.role,
+                "content": m.content,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in reversed(msgs)
+        ]
+    }
+
+
+@app.post("/api/agent/sessions/{session_id}/send")
+async def send_agent_session_message(
+    session_id: int,
+    data: dict,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_copilot_permission(current_user, db)
+    enforce_plan_limits(current_user, db)
+
+    data = data or {}
+    prompt = str(data.get("prompt", "") or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required")
+
+    continue_raw = data.get("continue_session", True)
+    continue_session = continue_raw if isinstance(continue_raw, bool) else str(continue_raw).strip().lower() in {"1", "true", "yes", "on"}
+    async_raw = data.get("async", True)
+    run_async = async_raw if isinstance(async_raw, bool) else str(async_raw).strip().lower() in {"1", "true", "yes", "on"}
+
+    session = db.query(AgentSession).filter(
+        AgentSession.id == session_id,
+        AgentSession.user_id == current_user.id,
+        AgentSession.is_active == True
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    effective_prompt = _build_session_prompt(db, session.id, prompt) if continue_session else prompt
+    db.add(AgentSessionMessage(session_id=session.id, role="user", content=prompt[:8000]))
+    session.updated_at = datetime.utcnow()
+    db.commit()
+
+    params = {
+        "prompt": effective_prompt,
+        "agent": (session.agent or "copilot"),
+        "project_path": (session.project_path or ""),
+        "model": (session.model or ""),
+        "allow_tools": (session.allow_tools or "all"),
+    }
+
+    # Enforce trust policy/approval for sensitive tool execution.
+    policy_row = _get_or_create_trust_policy(current_user.id, db)
+    policy = apply_profile_defaults(normalize_policy_row(policy_row))
+    allowed, blocked_reason, sensitive, sensitivity_reason = evaluate_request(policy, "ask_agent", params)
+    if not allowed:
+        blocked_msg_map = {
+            "kill_switch_enabled": "Execution blocked: emergency kill switch is enabled.",
+            "blocked_destructive_pattern": "Execution blocked by destructive-command protection policy.",
+            "network_command_blocked": "Execution blocked: network commands are disabled in your policy.",
+            "command_not_in_allowlist": "Execution blocked: command is not in your allowlist.",
+        }
+        blocked_msg = blocked_msg_map.get(blocked_reason, "Execution blocked by trust policy.")
+        return {"success": False, "status": "blocked", "error": blocked_msg}
+
+    if policy.get("require_approval", True) and sensitive:
+        fp = request_fingerprint(current_user.id, "ask_agent", params)
+        approved = db.query(ToolApproval).filter(
+            ToolApproval.user_id == current_user.id,
+            ToolApproval.request_fingerprint == fp,
+            ToolApproval.status == "approved",
+            ToolApproval.consumed_at.is_(None)
+        ).order_by(ToolApproval.created_at.desc()).first()
+        if not approved:
+            pending = db.query(ToolApproval).filter(
+                ToolApproval.user_id == current_user.id,
+                ToolApproval.request_fingerprint == fp,
+                ToolApproval.status == "pending"
+            ).order_by(ToolApproval.created_at.desc()).first()
+            if not pending:
+                pending = ToolApproval(
+                    user_id=current_user.id,
+                    tool_name="ask_agent",
+                    input_params=json.dumps(params),
+                    request_fingerprint=fp,
+                    sensitivity_reason=sensitivity_reason,
+                    status="pending",
+                )
+                db.add(pending)
+                db.commit()
+                db.refresh(pending)
+            return {
+                "success": False,
+                "status": "pending_approval",
+                "approval_required": True,
+                "approval_id": pending.id,
+                "error": f"Approval required before execution. Request #{pending.id} is pending.",
+            }
+        approved.status = "consumed"
+        approved.consumed_at = datetime.utcnow()
+        db.commit()
+
+    if run_async:
+        task = AgentTask(
+            user_id=current_user.id,
+            tool_name="ask_agent",
+            input_params=json.dumps(params),
+            status="queued",
+            created_at=datetime.utcnow(),
+            agent_session_id=session.id,
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        threading.Thread(target=_run_agent_task, args=(task.id,), daemon=True).start()
+
+        crawl_url = _crawler_url_from_request(request, task.id)
+        return {
+            "success": True,
+            "status": "queued",
+            "task_id": task.id,
+            "agent_session_id": session.id,
+            "crawler_url": crawl_url,
+            "result": f"⏳ Task queued: #{task.id}",
+        }
+
+    result = execute_tool("ask_agent", **params)
+    success = not str(result).startswith("❌")
+    db.add(AgentSessionMessage(session_id=session.id, role="assistant", content=str(result)[:12000]))
+    session.updated_at = datetime.utcnow()
+    db.commit()
+    return {
+        "success": success,
+        "status": "completed" if success else "failed",
+        "agent_session_id": session.id,
+        "result": result,
     }
 
 @app.get("/api/tools/execution-log")
@@ -805,6 +1648,154 @@ async def get_workspace(current_user: User = Depends(get_current_user)):
         "exists": os.path.isdir(ws_path) if ws_path else True
     }
 
+# ==================== TRUST & SAFETY ROUTES ====================
+
+@app.get("/api/trust/policy")
+async def get_trust_policy(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    policy_row = _get_or_create_trust_policy(current_user.id, db)
+    policy = apply_profile_defaults(normalize_policy_row(policy_row))
+    return {"policy": policy}
+
+
+@app.put("/api/trust/policy")
+async def update_trust_policy(
+    data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    policy_row = _get_or_create_trust_policy(current_user.id, db)
+
+    incoming = {
+        "profile": data.get("profile", policy_row.profile or "balanced"),
+        "require_approval": data.get("require_approval", policy_row.require_approval),
+        "block_destructive": data.get("block_destructive", policy_row.block_destructive),
+        "allow_network": data.get("allow_network", policy_row.allow_network),
+        "kill_switch": data.get("kill_switch", policy_row.kill_switch),
+        "allowed_command_prefixes": data.get("allowed_command_prefixes", policy_row.allowed_command_prefixes or ""),
+    }
+    merged = apply_profile_defaults(incoming)
+
+    policy_row.profile = merged["profile"]
+    policy_row.require_approval = bool(merged["require_approval"])
+    policy_row.block_destructive = bool(merged["block_destructive"])
+    policy_row.allow_network = bool(merged["allow_network"])
+    policy_row.kill_switch = bool(merged["kill_switch"])
+    policy_row.allowed_command_prefixes = merged["allowed_command_prefixes"] or ""
+    policy_row.updated_at = datetime.utcnow()
+    db.commit()
+
+    return {"success": True, "policy": merged}
+
+
+@app.get("/api/trust/approvals")
+async def list_trust_approvals(
+    status_filter: str = "pending",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    q = db.query(ToolApproval)
+    if current_user.is_superuser:
+        pass
+    else:
+        q = q.filter(ToolApproval.user_id == current_user.id)
+
+    if status_filter and status_filter != "all":
+        q = q.filter(ToolApproval.status == status_filter)
+
+    approvals = q.order_by(ToolApproval.created_at.desc()).limit(100).all()
+    return {
+        "approvals": [
+            {
+                "id": a.id,
+                "user_id": a.user_id,
+                "tool_name": a.tool_name,
+                "input_params": json.loads(a.input_params or "{}"),
+                "status": a.status,
+                "sensitivity_reason": a.sensitivity_reason,
+                "approved_by": a.approved_by,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+                "resolved_at": a.resolved_at.isoformat() if a.resolved_at else None,
+                "consumed_at": a.consumed_at.isoformat() if a.consumed_at else None,
+            }
+            for a in approvals
+        ]
+    }
+
+
+@app.post("/api/trust/approvals/{approval_id}/approve")
+async def approve_trust_request(
+    approval_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    approval = db.query(ToolApproval).filter(ToolApproval.id == approval_id).first()
+    if not approval:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+
+    if not current_user.is_superuser and approval.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to approve this request")
+    if approval.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Request already {approval.status}")
+
+    approval.status = "approved"
+    approval.approved_by = current_user.id
+    approval.resolved_at = datetime.utcnow()
+    db.commit()
+    return {"success": True, "message": f"Approval #{approval_id} approved"}
+
+
+@app.post("/api/trust/approvals/{approval_id}/reject")
+async def reject_trust_request(
+    approval_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    approval = db.query(ToolApproval).filter(ToolApproval.id == approval_id).first()
+    if not approval:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+
+    if not current_user.is_superuser and approval.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to reject this request")
+    if approval.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Request already {approval.status}")
+
+    approval.status = "rejected"
+    approval.approved_by = current_user.id
+    approval.resolved_at = datetime.utcnow()
+    db.commit()
+    return {"success": True, "message": f"Approval #{approval_id} rejected"}
+
+
+@app.get("/api/trust/audit")
+async def get_trust_audit(
+    limit: int = 100,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    q = db.query(CommandLog)
+    if not current_user.is_superuser:
+        q = q.filter(CommandLog.user_id == current_user.id)
+
+    rows = q.order_by(CommandLog.created_at.desc()).limit(max(10, min(limit, 200))).all()
+    return {
+        "events": [
+            {
+                "id": r.id,
+                "user_id": r.user_id,
+                "tool": r.tool_name,
+                "action": r.action,
+                "status": r.status,
+                "result": r.result,
+                "device_id": r.device_id,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+    }
+
 # ==================== HEALTH && INFO ====================
 
 @app.get("/api/bugs")
@@ -934,6 +1925,13 @@ async def stream_command_ws(
             await websocket.close(code=4003)
             return
 
+    policy_row = _get_or_create_trust_policy(user.id, db)
+    policy = apply_profile_defaults(normalize_policy_row(policy_row))
+    if policy.get("kill_switch"):
+        await websocket.send_json({"type": "error", "data": "Execution blocked: emergency kill switch is enabled."})
+        await websocket.close(code=4003)
+        return
+
     BLOCKED_PATTERNS = [
         r'\brm\s+-rf\s+[/~]', r'\bmkfs\b', r'\bdd\s+if=',
         r':(){ :\|:& };:', r'\b>\/dev\/sd', r'\bsudo\s+rm\b',
@@ -945,9 +1943,16 @@ async def stream_command_ws(
         while True:
             data = await websocket.receive_json()
             command = data.get("command", "").strip()
-            cwd = data.get("cwd") or _get_workspace()
+            raw_cwd = data.get("cwd") or _get_workspace()
 
             if not command:
+                continue
+
+            try:
+                cwd = _resolve_path(raw_cwd)
+            except Exception as e:
+                await websocket.send_json({"type": "error", "data": f"Invalid working directory: {str(e)}"})
+                await websocket.send_json({"type": "done", "exit_code": 1})
                 continue
 
             # Block dangerous patterns
@@ -956,6 +1961,13 @@ async def stream_command_ws(
                 await websocket.send_json({"type": "error", "data": "BLOCKED: Dangerous command pattern."})
                 await websocket.send_json({"type": "done", "exit_code": 1})
                 continue
+
+            # Optional network command restrictions (safe profile)
+            if not policy.get("allow_network", True):
+                if _re.search(r'\\bcurl\\b|\\bwget\\b|\\bssh\\b|\\bscp\\b|\\bnc\\b|\\bncat\\b|\\brsync\\b', command, _re.IGNORECASE):
+                    await websocket.send_json({"type": "error", "data": "BLOCKED: Network commands are disabled in policy."})
+                    await websocket.send_json({"type": "done", "exit_code": 1})
+                    continue
 
             await websocket.send_json({"type": "start", "command": command})
 
@@ -1058,23 +2070,45 @@ async def list_ideas(current_user: User = Depends(get_current_user), db: Session
 
 @app.post("/api/ideas")
 async def create_idea(data: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    body = data.get("body", "").strip()
+    data = data or {}
+
+    def _clean_text(value) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    body = _clean_text(data.get("body"))
     if not body:
         raise HTTPException(status_code=400, detail="Idea body required")
-    idea = IdeaNote(user_id=current_user.id, title=data.get("title", "").strip() or None,
-                    body=body, tags=data.get("tags", "").strip() or None)
+    title = _clean_text(data.get("title")) or None
+    tags = _clean_text(data.get("tags")) or None
+
+    idea = IdeaNote(user_id=current_user.id, title=title, body=body, tags=tags)
     db.add(idea); db.commit(); db.refresh(idea)
     return {"id": idea.id, "title": idea.title, "body": idea.body, "tags": idea.tags,
             "is_done": idea.is_done, "created_at": idea.created_at.isoformat()}
 
 @app.patch("/api/ideas/{idea_id}")
 async def update_idea(idea_id: int, data: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    data = data or {}
     idea = db.query(IdeaNote).filter(IdeaNote.id == idea_id, IdeaNote.user_id == current_user.id).first()
     if not idea:
         raise HTTPException(status_code=404, detail="Idea not found")
-    if "body" in data: idea.body = data["body"]
-    if "title" in data: idea.title = data["title"] or None
-    if "tags" in data: idea.tags = data["tags"] or None
+
+    def _clean_text(value) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    if "body" in data:
+        new_body = _clean_text(data.get("body"))
+        if not new_body:
+            raise HTTPException(status_code=400, detail="Idea body required")
+        idea.body = new_body
+    if "title" in data:
+        idea.title = _clean_text(data.get("title")) or None
+    if "tags" in data:
+        idea.tags = _clean_text(data.get("tags")) or None
     if "is_done" in data: idea.is_done = bool(data["is_done"])
     idea.updated_at = datetime.utcnow()
     db.commit()
@@ -1133,6 +2167,63 @@ async def run_workflow(workflow_id: int, current_user: User = Depends(get_curren
     return result
 
 
+# ==================== CLI API KEY ROUTES ====================
+
+@app.get("/api/auth/api-key")
+async def get_api_key_status(request: Request, db: Session = Depends(get_db)):
+    """Returns key status and plan.
+    Accepts Bearer JWT (web UI) or X-VSCARS-Key header (CLI validation during init)."""
+    vscars_key = request.headers.get("X-VSCARS-Key", "").strip()
+    if vscars_key:
+        current_user = _resolve_user_from_api_key(vscars_key, db)
+    else:
+        from app.auth import decode_token, is_token_revoked
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Authentication required")
+        token = auth_header.split(" ")[1]
+        if is_token_revoked(token, db):
+            raise HTTPException(status_code=401, detail="Token revoked")
+        payload = decode_token(token)
+        current_user = db.query(User).filter(
+            User.username == payload.get("sub"), User.is_active == True
+        ).first()
+        if not current_user:
+            raise HTTPException(status_code=401, detail="User not found")
+
+    return {
+        "has_key": bool(current_user.api_key_hash),
+        "plan": current_user.plan,
+        "can_use_machine": current_user.plan in ("pro", "team", "self_hosted") or current_user.is_superuser,
+    }
+
+
+@app.post("/api/auth/api-key/generate")
+async def generate_api_key(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Issue or regenerate the CLI API key. Returns the raw key — shown once.
+    Requires a paid plan (or superuser)."""
+    if not current_user.is_superuser:
+        perm = db.query(UserPermission).filter(UserPermission.user_id == current_user.id).first()
+        if not perm or not perm.can_use_machine:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "message": "CLI API keys require a Pro plan or above.",
+                    "code": "plan_required",
+                    "upgrade_url": "/billing",
+                },
+            )
+    from app.billing.plan_limits import issue_api_key
+    raw_key = issue_api_key(current_user, db)
+    return {
+        "api_key": raw_key,
+        "note": "Save this key — it will not be shown again. Use it with `vscars init`.",
+    }
+
+
 # ==================== SESSION MANAGEMENT ROUTES ====================
 
 @app.get("/api/auth/sessions")
@@ -1184,6 +2275,201 @@ async def dashboard_brief(current_user: User = Depends(get_current_user), db: Se
     }
 
 
+# ==================== MACHINE REGISTRY & RELAY ====================
+
+def _resolve_user_from_api_key(api_key: str, db: Session) -> User:
+    """Look up a user by their raw CLI API key. Raises 401 if invalid."""
+    key_hash = _hashlib.sha256(api_key.encode()).hexdigest()
+    user = db.query(User).filter(User.api_key_hash == key_hash, User.is_active == True).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return user
+
+
+@app.post("/api/machines/register")
+async def register_machine(
+    request: Request,
+    data: dict,
+    db: Session = Depends(get_db),
+):
+    """Register a machine. Called by `vscars init`.
+    Accepts either:
+      - `Authorization: Bearer <jwt>` (web UI flow)
+      - `X-VSCARS-Key: <api_key>` (CLI flow — no login needed)
+    Requires Pro plan or above."""
+    import secrets as _sec
+
+    # Resolve user from API key header or JWT
+    vscars_key = request.headers.get("X-VSCARS-Key", "").strip()
+    if vscars_key:
+        current_user = _resolve_user_from_api_key(vscars_key, db)
+    else:
+        # Fall back to JWT auth
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Authentication required (Bearer token or X-VSCARS-Key)")
+        from app.auth import decode_token, is_token_revoked
+        token = auth_header.split(" ")[1]
+        if is_token_revoked(token, db):
+            raise HTTPException(status_code=401, detail="Token revoked")
+        payload = decode_token(token)
+        username = payload.get("sub")
+        current_user = db.query(User).filter(User.username == username, User.is_active == True).first()
+        if not current_user:
+            raise HTTPException(status_code=401, detail="User not found")
+
+    if not current_user.is_superuser:
+        perm = db.query(UserPermission).filter(UserPermission.user_id == current_user.id).first()
+        if not perm or not perm.can_use_machine:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "message": "Machine registration requires a Pro plan or above.",
+                    "code": "plan_required",
+                    "upgrade_url": "https://vscars.latenightstack.com/#pricing",
+                },
+            )
+
+    machine_id = (data.get("machine_id") or "").strip()
+    name = (data.get("name") or "My Machine").strip()[:64]
+    hostname = (data.get("hostname") or "").strip()[:128]
+    os_info = (data.get("os_info") or "").strip()[:128]
+
+    if not machine_id:
+        raise HTTPException(status_code=400, detail="machine_id required")
+
+    token = _sec.token_urlsafe(32)
+    token_hash = _hashlib.sha256(token.encode()).hexdigest()
+
+    existing = db.query(RegisteredMachine).filter(
+        RegisteredMachine.machine_id == machine_id
+    ).first()
+
+    if existing:
+        if existing.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Machine already registered to another user")
+        existing.token_hash = token_hash
+        existing.name = name
+        existing.hostname = hostname
+        existing.os_info = os_info
+        existing.is_active = True
+        db.commit()
+    else:
+        machine = RegisteredMachine(
+            user_id=current_user.id,
+            machine_id=machine_id,
+            name=name,
+            hostname=hostname,
+            os_info=os_info,
+            token_hash=token_hash,
+        )
+        db.add(machine)
+        db.commit()
+
+    return {"machine_id": machine_id, "token": token, "name": name}
+
+
+@app.get("/api/machines")
+async def list_machines(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List the current user's registered machines and their connection status."""
+    machines = db.query(RegisteredMachine).filter(
+        RegisteredMachine.user_id == current_user.id,
+        RegisteredMachine.is_active == True,
+    ).all()
+    connected_ids = set(_relay.get_connected_machines(current_user.id))
+    return {
+        "machines": [
+            {
+                "machine_id": m.machine_id,
+                "name": m.name,
+                "hostname": m.hostname,
+                "os_info": m.os_info,
+                "is_connected": m.machine_id in connected_ids,
+                "last_seen_at": m.last_seen_at.isoformat() if m.last_seen_at else None,
+                "created_at": m.created_at.isoformat(),
+            }
+            for m in machines
+        ],
+        "any_connected": bool(connected_ids),
+    }
+
+
+@app.delete("/api/machines/{machine_id}")
+async def delete_machine(
+    machine_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    machine = db.query(RegisteredMachine).filter(
+        RegisteredMachine.machine_id == machine_id,
+        RegisteredMachine.user_id == current_user.id,
+    ).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+    machine.is_active = False
+    db.commit()
+    return {"success": True}
+
+
+@app.websocket("/ws/agent/{machine_token}")
+async def agent_websocket(
+    ws: WebSocket,
+    machine_token: str,
+    db: Session = Depends(get_db),
+):
+    """Persistent WebSocket connection from the vscars CLI agent running on the user's machine.
+    The server relays tool calls to this socket and forwards results back to HTTP callers."""
+    token_hash = _hashlib.sha256(machine_token.encode()).hexdigest()
+    machine = db.query(RegisteredMachine).filter(
+        RegisteredMachine.token_hash == token_hash,
+        RegisteredMachine.is_active == True,
+    ).first()
+
+    if not machine:
+        await ws.close(code=4001, reason="Invalid or expired machine token")
+        return
+
+    await ws.accept()
+
+    machine.is_connected = True
+    machine.last_seen_at = datetime.utcnow()
+    db.commit()
+
+    _relay.register(machine.user_id, machine.machine_id, ws)
+
+    try:
+        # Send welcome so CLI knows it's connected
+        await ws.send_json({
+            "type": "connected",
+            "machine_id": machine.machine_id,
+            "name": machine.name,
+        })
+
+        while True:
+            data = await ws.receive_json()
+            msg_type = data.get("type")
+
+            if msg_type == "tool_result":
+                _relay.resolve_call(data.get("call_id", ""), data)
+
+            elif msg_type == "ping":
+                machine.last_seen_at = datetime.utcnow()
+                db.commit()
+                await ws.send_json({"type": "pong"})
+
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        _relay.unregister(machine.user_id, machine.machine_id)
+        machine.is_connected = False
+        db.commit()
+
+
 # ==================== COPILOT MODELS ROUTE ====================
 
 # Model catalogue — ordered cheapest → most capable within each tier
@@ -1201,10 +2487,11 @@ _ALL_MODELS = [
 ]
 
 _PLAN_MODEL_IDS = {
-    "free":        [],  # copilot disabled
+    # Free: limited model selection (AI chat only, no machine access)
+    "free":        {"claude-haiku-4.5", "gpt-5-mini"},
     "pro":         {"claude-haiku-4.5", "claude-sonnet-4.6", "gpt-4.1", "gpt-5-mini", "gpt-5.2"},
-    "team":        {m["id"] for m in _ALL_MODELS},  # all
-    "self_hosted": {m["id"] for m in _ALL_MODELS},  # all
+    "team":        {m["id"] for m in _ALL_MODELS},
+    "self_hosted": {m["id"] for m in _ALL_MODELS},
 }
 
 @app.get("/api/copilot/models")
@@ -1240,6 +2527,13 @@ async def serve_app():
     if os.path.exists(index_path):
         return FileResponse(index_path, media_type="text/html")
     return JSONResponse({"status": "error", "message": "App not found"}, status_code=404)
+
+@app.get("/setup", include_in_schema=False)
+async def serve_setup():
+    setup_path = os.path.join(STATIC_DIR, "setup.html")
+    if os.path.exists(setup_path):
+        return FileResponse(setup_path, media_type="text/html")
+    return JSONResponse({"status": "error", "message": "Setup guide not found"}, status_code=404)
 
 @app.get("/{full_path:path}", include_in_schema=False)
 async def catch_all(full_path: str):

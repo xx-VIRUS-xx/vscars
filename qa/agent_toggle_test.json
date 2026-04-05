@@ -1,0 +1,52 @@
+{
+  "timestamp": "2026-04-01T04:27:47.112603+00:00",
+  "tests": [
+    {
+      "input": {
+        "tool": "ask_agent",
+        "prompt": "Reply exactly: API_OK_COPILOT",
+        "agent": "copilot",
+        "model": "gpt-5.2",
+        "allow_tools": "all",
+        "project_path": ""
+      },
+      "http_status": 200,
+      "success": true,
+      "error": null,
+      "result_head": "\ud83e\udded Agent: Copilot Agent\n\ud83c\udfaf Requested Model: gpt-5.2\n\n\ud83e\udd16 COPILOT AGENT RESPONSE\n\ud83d\udcc1 Project: /var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_agent_toggle_8tdp9e9p/ws\n\ud83e\udde0 Model: gpt-5.2\n\ud83d\udd27 Permissions: all\n\nAPI_OK_COPILOT"
+    },
+    {
+      "input": {
+        "tool": "ask_agent",
+        "prompt": "Reply exactly: API_OK_CLAUDE",
+        "agent": "claude",
+        "model": "claude-sonnet-4.6",
+        "allow_tools": "all",
+        "project_path": ""
+      },
+      "http_status": 200,
+      "success": true,
+      "error": null,
+      "result_head": "\ud83e\udded Agent: Claude Code\n\ud83c\udfaf Requested Model: claude-sonnet-4.6\n\n\ud83e\udd16 COPILOT AGENT RESPONSE\n\ud83d\udcc1 Project: /var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_agent_toggle_8tdp9e9p/ws\n\ud83e\udde0 Model: claude-sonnet-4.6\n\ud83d\udd27 Permissions: al"
+    },
+    {
+      "input": {
+        "tool": "ask_agent",
+        "prompt": "Reply exactly: API_OK_CODEX",
+        "agent": "codex",
+        "model": "gpt-5.3-codex",
+        "allow_tools": "all",
+        "project_path": ""
+      },
+      "http_status": 200,
+      "success": true,
+      "error": null,
+      "result_head": "\ud83e\udded Agent: Codex\n\ud83c\udfaf Requested Model: gpt-5.3-codex\n\n\ud83e\udd16 COPILOT AGENT RESPONSE\n\ud83d\udcc1 Project: /var/folders/ys/xq1c6fhd2252wf2wx7tvf0xc0000gn/T/vscars_agent_toggle_8tdp9e9p/ws\n\ud83e\udde0 Model: gpt-5.3-codex\n\ud83d\udd27 Permissions: all\n\nAPI_OK_CODE"
+    }
+  ],
+  "summary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0
+  }
+}

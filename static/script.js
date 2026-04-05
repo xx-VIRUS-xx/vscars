@@ -4,6 +4,28 @@ let authToken = null;
 let billingStatus = null;
 let _sessionExpired = false;
 let _tokenExpiryTimer = null;
+let currentAgentSessionId = Number(localStorage.getItem('currentAgentSessionId') || '0') || null;
+let _agentSessions = [];
+let _agentInboxSessionId = null;
+let _agentSessionsTimer = null;
+const _tabId = Math.random().toString(36).slice(2);
+const _agentNotifyChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('vscars-agent-notify') : null;
+const apiFetch = (...args) => fetchAPI(...args);
+
+if (_agentNotifyChannel) {
+    _agentNotifyChannel.onmessage = (event) => {
+        const note = event?.data || {};
+        if (!note || note.source === _tabId) return;
+        const ok = note.status === 'completed';
+        showToast(note.message || `Task #${note.task_id} finished`, ok ? 'success' : 'warning', 7000);
+    };
+}
+
+window.addEventListener('storage', (e) => {
+    if (e.key === 'currentAgentSessionId') {
+        currentAgentSessionId = Number(e.newValue || '0') || null;
+    }
+});
 
 // ==================== SESSION EXPIRY ====================
 
@@ -76,6 +98,7 @@ setTheme(getPreferredTheme());
 
 // ==================== WEBSOCKET STREAM ====================
 let _streamWS = null;
+let _agentNotifTimer = null;
 
 function getStreamWS() {
     if (_streamWS && _streamWS.readyState === WebSocket.OPEN) return _streamWS;
@@ -100,8 +123,20 @@ function streamCommand(command, cwd) {
 
         let buffer = '';
 
+        const cleanup = () => {
+            if (indicator) indicator.style.display = 'none';
+            ws.removeEventListener('message', onMessage);
+            ws.removeEventListener('close', onClose);
+            clearTimeout(safetyTimer);
+        };
+
         const onMessage = (evt) => {
-            const msg = JSON.parse(evt.data);
+            let msg = null;
+            try {
+                msg = JSON.parse(evt.data);
+            } catch {
+                return;
+            }
             if (msg.type === 'output') {
                 buffer += msg.data;
                 output.textContent = buffer;
@@ -110,14 +145,24 @@ function streamCommand(command, cwd) {
                 buffer += `\n❌ ${msg.data}\n`;
                 output.textContent = buffer;
             } else if (msg.type === 'done') {
-                if (indicator) indicator.style.display = 'none';
-                ws.removeEventListener('message', onMessage);
+                cleanup();
                 resolve(buffer);
             }
         };
 
+        const onClose = () => {
+            cleanup();
+            resolve(null);
+        };
+
+        const safetyTimer = setTimeout(() => {
+            cleanup();
+            resolve(null);
+        }, 180000);
+
         const ready = () => {
             ws.addEventListener('message', onMessage);
+            ws.addEventListener('close', onClose, { once: true });
             ws.send(JSON.stringify({ command, cwd }));
         };
 
@@ -158,6 +203,252 @@ function showToast(message, type = 'info', duration = 3000) {
         toast.style.transition = 'opacity 0.25s, transform 0.25s';
         setTimeout(() => toast.remove(), 280);
     }, duration);
+}
+
+function setCurrentAgentSession(id) {
+    const numeric = Number(id || 0) || null;
+    currentAgentSessionId = numeric;
+    localStorage.setItem('currentAgentSessionId', String(numeric || ''));
+}
+
+function _agentRoleLabel(role) {
+    if (role === 'assistant') return 'Agent';
+    if (role === 'system') return 'System';
+    return 'You';
+}
+
+function _renderAgentInboxThread(messages = []) {
+    const thread = document.getElementById('agent-inbox-thread');
+    if (!thread) return;
+    if (!messages.length) {
+        thread.innerHTML = '<p class="muted sm">No messages yet in this session.</p>';
+        return;
+    }
+    thread.innerHTML = messages.map(m => {
+        const role = m.role || 'user';
+        const isAssistant = role === 'assistant';
+        const bg = isAssistant ? 'var(--g3)' : 'rgba(6,182,212,0.12)';
+        const border = isAssistant ? 'var(--b1)' : 'rgba(6,182,212,0.35)';
+        const ts = m.created_at ? new Date(m.created_at).toLocaleString() : '';
+        return `<div style="border:1px solid ${border};background:${bg};border-radius:10px;padding:10px">
+            <div class="muted sm" style="margin-bottom:6px">${_agentRoleLabel(role)} · ${escapeHtml(ts)}</div>
+            <div style="white-space:pre-wrap;font-size:13px;line-height:1.45">${escapeHtml(m.content || '')}</div>
+        </div>`;
+    }).join('');
+    thread.scrollTop = thread.scrollHeight;
+}
+
+async function loadAgentInbox() {
+    const list = document.getElementById('agent-inbox-list');
+    if (!list) return;
+    list.innerHTML = '<p class="muted sm">Loading…</p>';
+    try {
+        const data = await fetchAPI('/api/agent/sessions');
+        const sessions = data.sessions || [];
+        _agentSessions = sessions;
+        if (!sessions.length) {
+            list.innerHTML = '<p class="muted sm">No sessions yet. Create one in Settings or run Ask Agent.</p>';
+            _renderAgentInboxThread([]);
+            return;
+        }
+        if (!_agentInboxSessionId) {
+            _agentInboxSessionId = currentAgentSessionId || sessions[0].id;
+        }
+        list.innerHTML = sessions.map(s => {
+            const selected = Number(_agentInboxSessionId) === Number(s.id);
+            const preview = (s.last_message_preview || 'No messages yet').replace(/\s+/g, ' ').trim();
+            const when = s.last_message_at ? new Date(s.last_message_at).toLocaleString() : '';
+            return `<button onclick="openAgentInboxSession(${s.id})" style="width:100%;text-align:left;background:${selected ? 'rgba(6,182,212,0.15)' : 'var(--g3)'};border:1px solid ${selected ? 'rgba(6,182,212,0.45)' : 'var(--b1)'};border-radius:10px;padding:10px;margin-bottom:8px;cursor:pointer">
+                <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+                    <div style="font-size:13px;font-weight:600;color:var(--t1)">${escapeHtml(s.name || `Session #${s.id}`)}</div>
+                    <div class="muted sm">${escapeHtml((s.message_count || 0).toString())}</div>
+                </div>
+                <div class="muted sm" style="margin-top:4px">${escapeHtml((s.agent || 'copilot') + (s.model ? ` · ${s.model}` : ''))}</div>
+                <div style="font-size:12px;color:var(--t2);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(preview)}</div>
+                <div class="muted sm" style="margin-top:4px">${escapeHtml(when)}</div>
+            </button>`;
+        }).join('');
+        await openAgentInboxSession(_agentInboxSessionId, true);
+    } catch (e) {
+        list.innerHTML = `<p class="muted sm">Could not load inbox: ${escapeHtml(e.message)}</p>`;
+    }
+}
+
+async function openAgentInboxSession(sessionId, skipListRefresh = false) {
+    if (!sessionId) return;
+    _agentInboxSessionId = Number(sessionId);
+    setCurrentAgentSession(_agentInboxSessionId);
+    const header = document.getElementById('agent-inbox-header');
+    const thread = document.getElementById('agent-inbox-thread');
+    if (header) header.textContent = `Loading session #${sessionId}...`;
+    if (thread) thread.innerHTML = '<p class="muted sm">Loading messages…</p>';
+    try {
+        const data = await fetchAPI(`/api/agent/sessions/${sessionId}?limit=120`);
+        const s = data.session || {};
+        if (header) {
+            header.textContent = `${s.name || `Session #${sessionId}`} · ${s.agent || 'copilot'}${s.model ? ` · ${s.model}` : ''}`;
+        }
+        _renderAgentInboxThread(data.messages || []);
+        if (!skipListRefresh) loadAgentInbox();
+    } catch (e) {
+        if (header) header.textContent = `Session #${sessionId}`;
+        if (thread) thread.innerHTML = `<p class="muted sm">Could not load messages: ${escapeHtml(e.message)}</p>`;
+    }
+}
+
+async function sendAgentInboxMessage() {
+    const input = document.getElementById('agent-inbox-input');
+    const text = (input?.value || '').trim();
+    if (!text) return;
+    if (!_agentInboxSessionId) {
+        showToast('Select a session first', 'warning');
+        return;
+    }
+    if (input) input.value = '';
+    try {
+        // Backend session endpoint is source of truth for agent/model/context.
+        const res = await fetchAPI(`/api/agent/sessions/${_agentInboxSessionId}/send`, {
+            method: 'POST',
+            body: JSON.stringify({ prompt: text, continue_session: true, async: true })
+        });
+        if (res.agent_session_id) {
+            setCurrentAgentSession(res.agent_session_id);
+            _agentInboxSessionId = res.agent_session_id;
+        }
+        showToast(`Queued in session #${_agentInboxSessionId}`, 'info');
+        await openAgentInboxSession(_agentInboxSessionId, true);
+    } catch (e) {
+        showToast(`Send failed: ${e.message}`, 'error');
+    }
+}
+
+async function loadAgentSessions() {
+    const container = document.getElementById('agent-sessions-list');
+    try {
+        const data = await fetchAPI('/api/agent/sessions');
+        _agentSessions = data.sessions || [];
+        if (!container) return _agentSessions;
+        if (!_agentSessions.length) {
+            container.innerHTML = '<p class="muted sm">No agent sessions yet. Create one to keep context.</p>';
+            return _agentSessions;
+        }
+        container.innerHTML = _agentSessions.map(s => {
+            const selected = currentAgentSessionId === s.id;
+            const updated = s.updated_at ? new Date(s.updated_at).toLocaleString() : '';
+            return `<div class="session-item" style="margin-bottom:8px">
+                <div>
+                    <div class="session-device">${escapeHtml(s.name || `Session #${s.id}`)}</div>
+                    <div class="session-meta">${escapeHtml((s.agent || 'copilot') + (s.model ? ` · ${s.model}` : ''))} · Updated ${escapeHtml(updated)}</div>
+                </div>
+                <button onclick="selectAgentSession(${s.id})" class="btn-sm ${selected ? 'btn-accent' : ''}">${selected ? 'Active' : 'Use'}</button>
+            </div>`;
+        }).join('');
+        return _agentSessions;
+    } catch (e) {
+        if (container) container.innerHTML = '<p class="muted sm">Could not load agent sessions</p>';
+        return [];
+    }
+}
+
+function selectAgentSession(id) {
+    setCurrentAgentSession(id);
+    showToast(`Agent session #${id} active`, 'success');
+    loadAgentSessions();
+}
+
+async function createAgentSession() {
+    const input = document.getElementById('new-agent-session-name');
+    const name = (input?.value || '').trim() || 'agent session';
+    const agentEl = document.getElementById('new-agent-session-agent');
+    const modelEl = document.getElementById('new-agent-session-model');
+    const lastAgent = (localStorage.getItem('lastAskAgent') || 'copilot').trim().toLowerCase();
+    const lastModel = (localStorage.getItem('lastAskModel') || '').trim();
+    const agent = (agentEl?.value || lastAgent || 'copilot').trim().toLowerCase();
+    const model = (modelEl?.value || lastModel || '').trim();
+    try {
+        const created = await fetchAPI('/api/agent/sessions', {
+            method: 'POST',
+            body: JSON.stringify({ name, agent, model: model || null })
+        });
+        if (input) input.value = '';
+        if (modelEl) modelEl.value = '';
+        setCurrentAgentSession(created.id);
+        showToast(`Created session #${created.id}`, 'success');
+        loadAgentSessions();
+    } catch (e) {
+        showToast(`Failed to create session: ${e.message}`, 'error');
+    }
+}
+
+function startAgentNotificationPolling() {
+    if (_agentNotifTimer) clearInterval(_agentNotifTimer);
+    pollAgentNotifications();
+    // Keep fast enough for UX, but avoid noisy background traffic.
+    _agentNotifTimer = setInterval(pollAgentNotifications, 6000);
+}
+
+async function openTaskTracker(taskId, crawlerUrl = '') {
+    if (!taskId) return;
+    showLoading(`Checking task #${taskId}...`);
+    try {
+        const data = await fetchAPI(`/api/agent/tasks/${taskId}`);
+        hideLoading();
+        const output = (data.result || data.error || '(No output)').trim();
+        const status = data.status || 'unknown';
+        document.getElementById('result-output').textContent =
+`Task #${taskId}
+Status: ${status}
+
+${output}`;
+        document.getElementById('tool-result').style.display = 'block';
+        if (status === 'completed') showToast(`Task #${taskId} completed`, 'success');
+        else if (status === 'failed') showToast(`Task #${taskId} failed`, 'error');
+        else showToast(`Task #${taskId} is ${status}`, 'info');
+    } catch (e) {
+        hideLoading();
+        showToast(`Failed to load task #${taskId}: ${e.message}`, 'error');
+        if (crawlerUrl) {
+            document.getElementById('result-output').textContent =
+`Task #${taskId}
+Could not load with session auth.
+Raw URL: ${crawlerUrl}`;
+            document.getElementById('tool-result').style.display = 'block';
+        }
+    }
+}
+
+async function pollAgentNotifications() {
+    if (!authToken) return;
+    // Do not poll while tab/app is backgrounded.
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    try {
+        const data = await fetchAPI('/api/agent/notifications');
+        const notes = data.notifications || [];
+        for (const n of notes) {
+            const ok = n.status === 'completed';
+            const msg = `${n.message}. Open Tools panel to view output.`;
+            showToast(msg, ok ? 'success' : 'warning', 7000);
+            if (_agentNotifyChannel) {
+                _agentNotifyChannel.postMessage({ ...n, message: msg, source: _tabId });
+            }
+            if (window.Notification && Notification.permission === 'granted') {
+                new Notification('VSCARS Agent Update', { body: msg });
+            }
+            if (n.agent_session_id && Number(n.agent_session_id) === Number(_agentInboxSessionId)) {
+                openAgentInboxSession(_agentInboxSessionId, true);
+            }
+        }
+    } catch (_) {
+        // Keep polling silently; transient failures are expected on mobile networks.
+    }
+}
+
+if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            pollAgentNotifications();
+        }
+    });
 }
 
 // ==================== LOADING OVERLAY ====================
@@ -301,8 +592,8 @@ async function register() {
         return;
     }
 
-    if (password.length < 6) {
-        errorElement.textContent = '⚠️ Password must be at least 6 characters';
+    if (password.length < 8) {
+        errorElement.textContent = '⚠️ Password must be at least 8 characters';
         return;
     }
 
@@ -374,10 +665,17 @@ async function requestQRAccess() {
         
         const data = await response.json();
         
-        // Display QR code
-        document.getElementById('qr-code-image').src = `data:image/png;base64,${data.qr_code_data}`;
-        document.getElementById('qr-request-id').textContent = data.request_id;
-        document.getElementById('qr-display').style.display = 'block';
+        // Display QR code (legacy UI-safe guard)
+        const qrImg = document.getElementById('qr-code-image');
+        const qrReq = document.getElementById('qr-request-id');
+        const qrBox = document.getElementById('qr-display');
+        if (qrImg && qrReq && qrBox) {
+            qrImg.src = `data:image/png;base64,${data.qr_code_data}`;
+            qrReq.textContent = data.request_id;
+            qrBox.style.display = 'block';
+        } else {
+            showToast('QR request created, but QR display UI is not enabled in this layout.', 'warning');
+        }
         
         hideLoading();
         showToast('✓ QR code generated!', 'success');
@@ -397,6 +695,14 @@ function logout() {
     localStorage.removeItem('currentUser');
     authToken = null;
     currentUser = null;
+    if (_agentNotifTimer) {
+        clearInterval(_agentNotifTimer);
+        _agentNotifTimer = null;
+    }
+    if (_agentSessionsTimer) {
+        clearInterval(_agentSessionsTimer);
+        _agentSessionsTimer = null;
+    }
     clearErrors();
     showToast('Signed out', 'info');
     showAuthView();
@@ -431,6 +737,15 @@ function showMainView() {
     loadTools();
     checkGitHubToken();
     loadBillingStatus();
+    startAgentNotificationPolling();
+    loadAgentSessions();
+    if (_agentSessionsTimer) clearInterval(_agentSessionsTimer);
+    _agentSessionsTimer = setInterval(() => {
+        if (document.getElementById('settings-view')?.classList.contains('active')) loadAgentSessions();
+    }, 8000);
+    if (window.Notification && Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {});
+    }
 
     if (shouldShowOnboarding()) {
         setTimeout(showOnboarding, 600);
@@ -468,7 +783,24 @@ function switchView(viewName) {
     } else if (viewName === 'settings') {
         checkGitHubToken();
         loadWorkspace();
+        loadTrustPolicy();
+        loadTrustApprovals();
+        loadTrustAudit();
+        loadSessions();
+        loadAgentSessions();
+    } else if (viewName === 'agent-inbox') {
+        loadAgentInbox();
+    } else if (viewName === 'machines') {
+        loadMachinesView();
+    } else if (viewName === 'billing') {
+        loadApiKeySection();
     }
+}
+
+function showMachinesPanel() {
+    // Close any open modal first
+    document.querySelectorAll('.modal.open').forEach(m => m.classList.remove('open'));
+    switchView('machines');
 }
 
 
@@ -551,6 +883,10 @@ function quickCopilotAgent() {
     openCopilotAgentTool();
 }
 
+function quickAskAgent() {
+    openAskAgentTool();
+}
+
 function quickBrowse() {
     showToolModal('browse_directory', {
         dirpath: { type: 'text', label: 'Directory Path (blank = workspace)', required: false },
@@ -594,6 +930,13 @@ function showTool(toolName) {
         create_project: { project_name: { type: 'text', label: 'Project Name', required: true }, project_type: { type: 'text', label: 'Type (python/node/react/flask/fastapi)', required: false }, parent_dir: { type: 'text', label: 'Parent Dir (blank = workspace)', required: false }, copilot_prompt: { type: 'textarea', label: '🤖 Copilot Setup Prompt (optional — AI will build your project)', required: false } },
         open_terminal: { cwd: { type: 'text', label: 'Terminal Path (blank = workspace)', required: false } },
         get_workspace_info: {},
+        ask_agent: {
+            prompt: { type: 'textarea', label: 'Ask Agent prompt', required: true },
+            agent: { type: 'text', label: 'Agent (copilot|claude|codex)', required: false },
+            model: { type: 'text', label: 'Model (optional)', required: false },
+            project_path: { type: 'text', label: 'Project Path (blank = workspace)', required: false },
+            allow_tools: { type: 'text', label: 'Permissions (all / read / edit)', required: false }
+        },
         copilot_agent: { prompt: { type: 'textarea', label: '🤖 What should Copilot do? (edit files, add features, fix bugs, refactor...)', required: true }, project_path: { type: 'text', label: 'Project Path (blank = workspace)', required: false }, model: { type: 'text', label: 'Model (default: claude-haiku-4.5 | claude-sonnet-4.6 / gpt-5.2)', required: false }, allow_tools: { type: 'text', label: 'Permissions (all / read / edit)', required: false } },
         browse_directory: { dirpath: { type: 'text', label: 'Directory Path (blank = workspace)', required: false }, depth: { type: 'number', label: 'Depth (default: 3)', required: false }, show_hidden: { type: 'text', label: 'Show hidden files? (true/false)', required: false } },
         ask_copilot: { query: { type: 'textarea', label: 'Ask AI (GPT-4o)...', required: true } },
@@ -604,6 +947,12 @@ function showTool(toolName) {
             allow_tools:  { type: 'text',     label: 'Permissions (all / read / edit)', required: false }
         }
     };
+
+    // ask_agent / copilot_agent need async model fetch — delegate
+    if (toolName === 'ask_agent') {
+        openAskAgentTool();
+        return;
+    }
 
     // copilot_agent needs async model fetch — delegate to dedicated function
     if (toolName === 'copilot_agent') {
@@ -676,6 +1025,139 @@ async function openCopilotAgentTool(prefillModel) {
     `;
 }
 
+async function openAskAgentTool(prefillAgent = 'copilot', prefillModel = '') {
+    document.getElementById('modal-title').textContent = '⚡ Execute: ask_agent';
+    const inputsContainer = document.getElementById('tool-inputs');
+    inputsContainer.innerHTML = '<p class="muted sm" style="padding:8px 0">Loading agent profiles…</p>';
+    document.getElementById('tool-form').dataset.tool = 'ask_agent';
+    document.getElementById('tool-form').reset();
+    document.getElementById('tool-result').style.display = 'none';
+    document.getElementById('result-output').textContent = '';
+    document.getElementById('tool-modal').classList.add('open');
+
+    let models = [];
+    let sessions = [];
+    try {
+        const res = await fetchAPI('/api/copilot/models');
+        models = res.models || [];
+    } catch (e) {
+        models = [
+            {id:'gpt-5.2', label:'GPT-5.2'},
+            {id:'claude-sonnet-4.6', label:'Claude Sonnet 4.6'},
+            {id:'gpt-5.3-codex', label:'GPT-5.3 Codex'},
+        ];
+    }
+    try {
+        const sr = await fetchAPI('/api/agent/sessions');
+        sessions = sr.sessions || [];
+        _agentSessions = sessions;
+    } catch (e) {
+        sessions = _agentSessions || [];
+    }
+
+    const defaults = {
+        copilot: 'gpt-5.2',
+        claude: 'claude-sonnet-4.6',
+        codex: 'gpt-5.3-codex',
+    };
+
+    const byId = new Map(models.map(m => [m.id, m]));
+    const agentChoices = [
+        { value: 'copilot', label: 'Copilot Agent', model: defaults.copilot },
+        { value: 'claude', label: 'Claude Code', model: defaults.claude },
+        { value: 'codex', label: 'Codex', model: defaults.codex },
+    ];
+
+    const lastAgent = (localStorage.getItem('lastAskAgent') || '').trim().toLowerCase();
+    const lastModel = (localStorage.getItem('lastAskModel') || '').trim();
+    const activeSession = (sessions || []).find(s => Number(s.id) === Number(currentAgentSessionId));
+    const activeAgent = (activeSession?.agent || '').trim().toLowerCase();
+    const activeModel = (activeSession?.model || '').trim();
+    const selectedAgent = defaults[activeAgent] ? activeAgent : (defaults[lastAgent] ? lastAgent : (defaults[prefillAgent] ? prefillAgent : 'copilot'));
+    const selectedModel = prefillModel || activeModel || lastModel || defaults[selectedAgent];
+    const modelOptions = models.map(m =>
+        `<option value="${m.id}" ${m.id === selectedModel ? 'selected' : ''}>${m.label}${m.speed ? ` — ${m.speed}` : ''}</option>`
+    ).join('');
+
+    const agentOptions = agentChoices.map(a =>
+        `<option value="${a.value}" ${a.value === selectedAgent ? 'selected' : ''}>${a.label}</option>`
+    ).join('');
+    const sessionOptions = ['<option value="">Auto (create/use latest)</option>']
+        .concat((sessions || []).map(s => `<option value="${s.id}" ${currentAgentSessionId === s.id ? 'selected' : ''}>#${s.id} · ${escapeHtml(s.name || 'session')}</option>`))
+        .join('');
+
+    inputsContainer.innerHTML = `
+        <div>
+            <label>Ask Agent</label>
+            <textarea name="prompt" placeholder="Implement feature X, fix Y, or refactor Z..." required rows="4" style="font-size:13px"></textarea>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div>
+                <label>Agent</label>
+                <select id="ask-agent-select" name="agent" style="width:100%">${agentOptions}</select>
+            </div>
+            <div>
+                <label>Model</label>
+                <select id="ask-agent-model-select" name="model" style="width:100%">${modelOptions}</select>
+            </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div>
+                <label>Agent Session</label>
+                <select id="ask-agent-session-select" name="agent_session_id" style="width:100%">${sessionOptions}</select>
+            </div>
+            <div>
+                <label>Session Name <span class="muted" style="font-weight:400">(for new)</span></label>
+                <input type="text" name="session_name" placeholder="e.g. API hardening">
+            </div>
+        </div>
+        <div>
+            <label class="muted sm"><input type="checkbox" name="continue_session" checked> Continue previous context in this session</label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div>
+                <label>Project Path <span class="muted" style="font-weight:400">(blank = workspace)</span></label>
+                <input type="text" name="project_path" placeholder="~/PY/myproject" style="font-family:var(--mono);font-size:12px">
+            </div>
+            <div>
+                <label>Permissions</label>
+                <select name="allow_tools" style="width:100%">
+                    <option value="all" selected>All (read + write + run)</option>
+                    <option value="edit">Edit only</option>
+                    <option value="read">Read only</option>
+                </select>
+            </div>
+        </div>
+    `;
+
+    const agentSelect = document.getElementById('ask-agent-select');
+    const modelSelect = document.getElementById('ask-agent-model-select');
+    if (agentSelect && modelSelect) {
+        agentSelect.addEventListener('change', () => {
+            const ag = agentSelect.value;
+            const target = defaults[ag] || defaults.copilot;
+            const hasTarget = byId.has(target);
+            if (hasTarget) modelSelect.value = target;
+        });
+    }
+    const sessionSelect = document.getElementById('ask-agent-session-select');
+    if (sessionSelect) {
+        sessionSelect.addEventListener('change', () => {
+            const sid = Number(sessionSelect.value || '0') || null;
+            if (sid) {
+                setCurrentAgentSession(sid);
+                const s = (sessions || []).find(x => Number(x.id) === sid);
+                if (s) {
+                    const a = (s.agent || '').trim().toLowerCase();
+                    if (agentSelect && defaults[a]) agentSelect.value = a;
+                    if (modelSelect && s.model && byId.has(s.model)) modelSelect.value = s.model;
+                    else if (modelSelect && defaults[a] && byId.has(defaults[a])) modelSelect.value = defaults[a];
+                }
+            }
+        });
+    }
+}
+
 function showToolModal(toolName, inputs) {
     document.getElementById('modal-title').textContent = `⚡ Execute: ${toolName}`;
 
@@ -713,6 +1195,15 @@ async function executeToolForm(e) {
     const params = { tool: toolName };
     for (let [key, value] of formData.entries()) {
         if (value) params[key] = value;
+    }
+    if (toolName === 'ask_agent' && !params.agent_session_id && currentAgentSessionId) {
+        params.agent_session_id = String(currentAgentSessionId);
+    }
+    if (toolName === 'ask_agent') {
+        const a = (params.agent || '').trim().toLowerCase();
+        if (a) localStorage.setItem('lastAskAgent', a);
+        const m = (params.model || '').trim();
+        if (m) localStorage.setItem('lastAskModel', m);
     }
     
     // Reset form inputs so user can type a new query immediately,
@@ -756,16 +1247,36 @@ async function executeToolForm(e) {
         
         const output = response.result || response.error || '(No output)';
         const success = response.success || false;
+        const approvalRequired = response.approval_required || false;
+        const isQueued = response.status === 'queued' && response.task_id;
+        if (toolName === 'ask_agent' && response.agent_session_id) {
+            setCurrentAgentSession(response.agent_session_id);
+            loadAgentSessions();
+        }
         
         // Display result
         if (output && output.trim().length > 0) {
-            document.getElementById('result-output').textContent = output;
+            if (isQueued) {
+                const safeOutput = escapeHtml(output);
+                const crawlerUrl = escapeHtml(response.crawler_url || '');
+                const taskId = Number(response.task_id || 0);
+                document.getElementById('result-output').innerHTML = `
+<div style="font-size:13px;white-space:pre-wrap">${safeOutput}</div>
+${crawlerUrl ? `<div style="margin-top:10px"><button onclick="openTaskTracker(${taskId}, '${crawlerUrl}')" style="background:var(--a);color:#000;border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer">Check task status</button></div>` : ''}`;
+            } else {
+                document.getElementById('result-output').textContent = output;
+            }
             document.getElementById('tool-result').style.display = 'block';
         }
         
         // Toast
-        if (success || output.includes('✅')) {
+        if (isQueued) {
+            showToast(`Task #${response.task_id} queued. You will be notified on completion.`, 'info', 5000);
+        } else if (success || output.includes('✅')) {
             showToast(`✅ ${toolName} executed!`, 'success');
+        } else if (approvalRequired) {
+            showToast(`Approval required (#${response.approval_id || 'pending'})`, 'warning');
+            if (typeof loadTrustApprovals === 'function') loadTrustApprovals();
         } else if (output.includes('⚠️')) {
             showToast(`⚠️ ${toolName} warning`, 'warning');
         } else if (output.includes('❌')) {
@@ -805,7 +1316,40 @@ async function executeToolForm(e) {
             // handleSessionExpiry() already called by fetchAPI
             return;
         }
-        
+
+        if (error.status === 503 && error.detail && error.detail.code === 'no_machine') {
+            // User hasn't connected their machine yet
+            document.getElementById('result-output').innerHTML = `
+<div style="text-align:center;padding:16px 8px">
+  <div style="font-size:28px;margin-bottom:10px">💻</div>
+  <div style="font-size:14px;font-weight:600;color:var(--t1);margin-bottom:6px">No machine connected</div>
+  <div style="font-size:12px;color:var(--t2);margin-bottom:14px">Install the vscars CLI on your laptop to use file and terminal tools.</div>
+  <div style="background:var(--g2);border:1px solid var(--b1);border-radius:8px;padding:10px 12px;text-align:left;font-family:monospace;font-size:12px;color:var(--t1);margin-bottom:10px">
+    curl -fsSL \"${window.location.origin}/static/install-connector.sh\" | bash<br>vscars init<br>vscars start
+  </div>
+  <button onclick="showMachinesPanel()" style="background:var(--a);color:#000;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer">View My Machines</button>
+  <div style="margin-top:8px"><a href=\"/setup\" target=\"_blank\" rel=\"noopener\" style=\"font-size:12px;color:var(--t2)\">Open full setup guide</a></div>
+</div>`;
+            document.getElementById('tool-result').style.display = 'block';
+            hideLoading();
+            return;
+        }
+
+        if (error.status === 403) {
+            // Plan restriction
+            const msg = error.message || 'Your plan does not allow this feature.';
+            document.getElementById('result-output').innerHTML = `
+<div style="text-align:center;padding:16px 8px">
+  <div style="font-size:28px;margin-bottom:10px">🔒</div>
+  <div style="font-size:14px;font-weight:600;color:var(--t1);margin-bottom:6px">Feature not available</div>
+  <div style="font-size:12px;color:var(--t2);margin-bottom:14px">${msg}</div>
+  <button onclick="switchView('billing')" style="background:var(--a);color:#000;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer">Upgrade Plan</button>
+</div>`;
+            document.getElementById('tool-result').style.display = 'block';
+            hideLoading();
+            return;
+        }
+
         // Friendly message for timeout/network errors instead of raw error
         const isTimeout = error.name === 'AbortError' || 
                           error.message.includes('Failed to fetch') ||
@@ -832,6 +1376,67 @@ async function executeToolForm(e) {
 // (Copilot now uses direct API — no polling needed)
 
 // ==================== SETTINGS & GITHUB TOKEN ====================
+
+// ==================== MACHINES VIEW ====================
+
+async function loadMachinesView() {
+    const container = document.getElementById('machines-list');
+    const serverUrl = window.location.origin;
+    if (!container) return;
+    container.innerHTML = '<p style="color:var(--t2);font-size:13px">Loading…</p>';
+
+    try {
+        const data = await fetchAPI('/api/machines');
+        const machines = data.machines || [];
+
+        if (!machines.length) {
+            container.innerHTML = `
+<div style="text-align:center;padding:24px 8px">
+  <div style="font-size:36px;margin-bottom:10px">💻</div>
+  <div style="font-size:15px;font-weight:600;color:var(--t1);margin-bottom:6px">No machines registered</div>
+  <div style="font-size:12px;color:var(--t2);margin-bottom:16px">Run the vscars CLI on your laptop to connect it.</div>
+  <div style="background:var(--g2);border:1px solid var(--b1);border-radius:10px;padding:14px 16px;text-align:left;font-family:monospace;font-size:12px;color:var(--t1);max-width:320px;margin:0 auto 12px">
+    curl -fsSL \"${serverUrl}/static/install-connector.sh\" | bash<br>vscars init<br>vscars start
+  </div>
+  <div style="font-size:11px;color:var(--t2)">Server URL to use during init: <code>${serverUrl}</code></div>
+  <div style="margin-top:8px"><a href=\"/setup\" target=\"_blank\" rel=\"noopener\" style=\"font-size:12px;color:var(--t2)\">Open full setup guide</a></div>
+</div>`;
+            return;
+        }
+
+        container.innerHTML = machines.map(m => `
+<div style="background:var(--g2);border:1px solid var(--b1);border-radius:12px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;gap:12px">
+  <div style="font-size:28px">${m.os_info && m.os_info.toLowerCase().includes('win') ? '🪟' : m.os_info && m.os_info.toLowerCase().includes('linux') ? '🐧' : '🍎'}</div>
+  <div style="flex:1;min-width:0">
+    <div style="font-size:14px;font-weight:600;color:var(--t1)">${m.name}</div>
+    <div style="font-size:11px;color:var(--t2)">${m.hostname || ''} · ${m.os_info || ''}</div>
+    <div style="font-size:11px;color:var(--t2)">Last seen: ${m.last_seen_at ? new Date(m.last_seen_at).toLocaleString() : 'Never'}</div>
+  </div>
+  <div>
+    <span style="font-size:10px;padding:3px 8px;border-radius:10px;font-weight:700;background:${m.is_connected ? '#22c55e22' : 'var(--g3)'};color:${m.is_connected ? '#22c55e' : 'var(--t2)'}">
+      ${m.is_connected ? '● Online' : '○ Offline'}
+    </span>
+  </div>
+  <button onclick="deleteMachine('${m.machine_id}')" style="background:none;border:none;color:var(--t2);cursor:pointer;font-size:16px;padding:4px" title="Remove machine">✕</button>
+</div>`).join('');
+
+    } catch (e) {
+        const isFree = e.status === 403;
+        container.innerHTML = isFree
+            ? `<div style="text-align:center;padding:16px"><div style="font-size:28px">🔒</div><div style="font-size:13px;color:var(--t2);margin-top:8px">Machine registration requires a Pro plan.</div><br><button onclick="switchView('billing')" style="background:var(--a);color:#000;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer">Upgrade</button></div>`
+            : `<p style="color:var(--t2);font-size:13px">Failed to load machines.</p>`;
+    }
+}
+
+async function deleteMachine(machineId) {
+    if (!confirm('Remove this machine?')) return;
+    try {
+        await fetchAPI(`/api/machines/${machineId}`, { method: 'DELETE' });
+        loadMachinesView();
+    } catch (e) {
+        showToast('Failed to remove machine', 'error');
+    }
+}
 
 async function checkGitHubToken() {
     try {
@@ -931,6 +1536,117 @@ async function saveWorkspace() {
 function setQuickWorkspace(path) {
     document.getElementById('workspace-path-input').value = path;
     saveWorkspace();
+}
+
+// ==================== TRUST & SAFETY ====================
+
+async function loadTrustPolicy() {
+    const statusEl = document.getElementById('trust-policy-status');
+    try {
+        const data = await fetchAPI('/api/trust/policy');
+        const p = data.policy || {};
+        const setChecked = (id, value) => {
+            const el = document.getElementById(id);
+            if (el) el.checked = !!value;
+        };
+        const profileEl = document.getElementById('trust-profile-select');
+        const prefixesEl = document.getElementById('trust-allow-prefixes');
+        if (profileEl) profileEl.value = p.profile || 'balanced';
+        if (prefixesEl) prefixesEl.value = p.allowed_command_prefixes || '';
+        setChecked('trust-require-approval', p.require_approval);
+        setChecked('trust-block-destructive', p.block_destructive);
+        setChecked('trust-allow-network', p.allow_network);
+        setChecked('trust-kill-switch', p.kill_switch);
+        if (statusEl) statusEl.textContent = `Loaded profile: ${(p.profile || 'balanced').toUpperCase()}`;
+    } catch (e) {
+        if (statusEl) statusEl.textContent = `Could not load trust policy: ${e.message}`;
+    }
+}
+
+async function saveTrustPolicy() {
+    const getVal = (id) => document.getElementById(id);
+    const payload = {
+        profile: getVal('trust-profile-select')?.value || 'balanced',
+        require_approval: !!getVal('trust-require-approval')?.checked,
+        block_destructive: !!getVal('trust-block-destructive')?.checked,
+        allow_network: !!getVal('trust-allow-network')?.checked,
+        kill_switch: !!getVal('trust-kill-switch')?.checked,
+        allowed_command_prefixes: getVal('trust-allow-prefixes')?.value || '',
+    };
+
+    try {
+        const res = await fetchAPI('/api/trust/policy', {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+        });
+        const p = res.policy || payload;
+        const statusEl = document.getElementById('trust-policy-status');
+        if (statusEl) statusEl.textContent = `Saved. Active profile: ${(p.profile || 'balanced').toUpperCase()}`;
+        showToast('Trust policy updated', 'success');
+        loadTrustAudit();
+    } catch (e) {
+        showToast(`Failed to update trust policy: ${e.message}`, 'error');
+    }
+}
+
+async function loadTrustApprovals() {
+    const listEl = document.getElementById('trust-approvals-list');
+    if (!listEl) return;
+    try {
+        const data = await fetchAPI('/api/trust/approvals?status_filter=pending');
+        const approvals = data.approvals || [];
+        if (!approvals.length) {
+            listEl.innerHTML = '<p class="muted sm">No pending approvals.</p>';
+            return;
+        }
+        listEl.innerHTML = approvals.map(a => {
+            const params = JSON.stringify(a.input_params || {}, null, 2);
+            return `
+<div style="border:1px solid var(--b1);background:var(--g2);border-radius:8px;padding:10px;margin-bottom:8px">
+  <div style="font-size:12px;font-weight:700;color:var(--t1);margin-bottom:6px">#${a.id} · ${escapeHtml(a.tool_name)}</div>
+  <div style="font-size:11px;color:var(--t2);margin-bottom:6px">Reason: ${escapeHtml(a.sensitivity_reason || 'sensitive_tool')}</div>
+  <pre style="white-space:pre-wrap;font-size:11px;max-height:120px;overflow:auto;border:1px solid var(--b1);padding:6px;border-radius:6px">${escapeHtml(params)}</pre>
+  <div style="display:flex;gap:8px;margin-top:8px">
+    <button class="btn-sm" onclick="resolveTrustApproval(${a.id}, 'approve')">Approve</button>
+    <button class="btn-sm btn-danger" onclick="resolveTrustApproval(${a.id}, 'reject')">Reject</button>
+  </div>
+</div>`;
+        }).join('');
+    } catch (e) {
+        listEl.innerHTML = `<p class="muted sm">Could not load approvals: ${escapeHtml(e.message)}</p>`;
+    }
+}
+
+async function resolveTrustApproval(id, action) {
+    try {
+        await fetchAPI(`/api/trust/approvals/${id}/${action}`, { method: 'POST' });
+        showToast(`Request #${id} ${action}d`, 'success');
+        loadTrustApprovals();
+        loadTrustAudit();
+    } catch (e) {
+        showToast(`Failed to ${action} #${id}: ${e.message}`, 'error');
+    }
+}
+
+async function loadTrustAudit() {
+    const listEl = document.getElementById('trust-audit-list');
+    if (!listEl) return;
+    try {
+        const data = await fetchAPI('/api/trust/audit?limit=30');
+        const events = data.events || [];
+        if (!events.length) {
+            listEl.innerHTML = '<p class="muted sm">No audit events yet.</p>';
+            return;
+        }
+        listEl.innerHTML = events.map(e => `
+<div style="border-bottom:1px solid var(--b1);padding:6px 0">
+  <div style="font-size:12px;color:var(--t1)">${escapeHtml(e.tool || '')} · <strong>${escapeHtml(e.status || '')}</strong></div>
+  <div style="font-size:11px;color:var(--t2)">${escapeHtml(e.action || '')}</div>
+  <div style="font-size:10px;color:var(--t3)">${new Date(e.created_at).toLocaleString()}</div>
+</div>`).join('');
+    } catch (e) {
+        listEl.innerHTML = `<p class="muted sm">Could not load audit: ${escapeHtml(e.message)}</p>`;
+    }
 }
 
 async function loadSystemInfo() {
@@ -1288,6 +2004,7 @@ async function fetchAPI(endpoint, options = {}) {
             const errorMessage = new Error(msg);
             errorMessage.status = response.status;
             errorMessage.body = error;
+            errorMessage.detail = typeof detail === 'object' ? detail : { message: msg };
             throw errorMessage;
         }
         
@@ -1299,6 +2016,61 @@ async function fetchAPI(endpoint, options = {}) {
         }
         throw error;
     }
+}
+
+// ==================== CLI API KEY ====================
+
+async function loadApiKeySection() {
+    const section = document.getElementById('api-key-section');
+    if (!section) return;
+    try {
+        const data = await fetchAPI('/api/auth/api-key');
+        if (!data.can_use_machine) {
+            // Free plan — hide section
+            section.style.display = 'none';
+            return;
+        }
+        section.style.display = 'block';
+        document.getElementById('api-key-btn').textContent = data.has_key ? 'Regenerate API Key' : 'Generate API Key';
+        document.getElementById('api-key-has-key').style.display = data.has_key ? 'block' : 'none';
+        document.getElementById('api-key-no-key').style.display = data.has_key ? 'none' : 'block';
+    } catch (e) {
+        section.style.display = 'none';
+    }
+}
+
+async function generateApiKey() {
+    const btn = document.getElementById('api-key-btn');
+    const hasKey = document.getElementById('api-key-has-key').style.display !== 'none';
+    if (hasKey && !confirm('Regenerate your API key? Your connected machines will need to run `vscars init` again.')) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Generating…';
+    try {
+        const data = await fetchAPI('/api/auth/api-key/generate', { method: 'POST' });
+        const keyInput = document.getElementById('api-key-value');
+        keyInput.value = data.api_key;
+        document.getElementById('api-key-display').style.display = 'block';
+        document.getElementById('api-key-has-key').style.display = 'none';
+        document.getElementById('api-key-no-key').style.display = 'none';
+        btn.textContent = 'Regenerate API Key';
+        showToast('API key generated — save it now', 'success', 6000);
+    } catch (e) {
+        showToast(e.message || 'Failed to generate key', 'error');
+        btn.textContent = 'Generate API Key';
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function copyApiKey() {
+    const val = document.getElementById('api-key-value')?.value;
+    if (!val) return;
+    navigator.clipboard.writeText(val).then(() => showToast('API key copied', 'success')).catch(() => {
+        document.getElementById('api-key-value').select();
+        document.execCommand('copy');
+        showToast('API key copied', 'success');
+    });
 }
 
 async function loadActivityLog() {
@@ -1577,10 +2349,10 @@ const PLAN_COLORS = {
 };
 
 const PLAN_FEATURES = {
-    free:        ['View files only', '20 API calls / day', 'No Copilot / Commands'],
-    pro:         ['All tools + Copilot Agent', '500 API calls / day', 'Full file editing'],
-    team:        ['Unlimited API calls', 'Multi-user workspace', 'Priority support'],
-    self_hosted: ['Your own server', 'Unlimited everything', 'One-time OR monthly'],
+    free:        ['AI Chat only', '50 API calls / day', 'No machine/file/terminal access'],
+    pro:         ['Full control on your own machine', '1000 API calls / day', 'Files + terminal + git + AI'],
+    team:        ['Unlimited API calls', 'Multi-user + multi-machine', 'Shared workspace'],
+    self_hosted: ['Run your own relay server', 'Unlimited everything', 'Monthly or lifetime license'],
 };
 
 async function loadBillingStatus() {
@@ -1740,14 +2512,11 @@ async function openBillingPortal() {
 
 function showUpgradeModal(detail) {
     const modal = document.getElementById('upgrade-modal');
-    const reason = document.getElementById('upgrade-reason');
+    const reason = document.getElementById('upgrade-modal-msg');
     if (!modal) return;
 
     const msg = typeof detail === 'string' ? detail : (detail?.message || 'Upgrade to continue.');
     if (reason) reason.textContent = msg;
-
-    const currentPlan = billingStatus?.plan || 'free';
-    _renderPricingCards('upgrade-pricing-cards', currentPlan, true);
 
     modal.style.display = 'flex';
 }
@@ -1794,7 +2563,8 @@ async function sendForgotPassword() {
 }
 
 function closeResetModal() {
-    document.getElementById('reset-modal').style.display = 'none';
+    const modal = document.getElementById('reset-modal');
+    if (modal) modal.style.display = 'none';
 }
 
 async function submitResetPassword() {
@@ -1932,7 +2702,7 @@ function quickIdeaCapture() {
     closeFAB();
     switchView('ideas');
     setTimeout(() => {
-        const ta = document.getElementById('idea-body');
+        const ta = document.getElementById('idea-body') || document.getElementById('idea-input');
         if (ta) ta.focus();
     }, 150);
 }
@@ -2024,9 +2794,12 @@ function renderIdeas() {
 }
 
 async function saveIdea() {
-    const body  = document.getElementById('idea-body').value.trim();
-    const title = document.getElementById('idea-title').value.trim();
-    const tags  = document.getElementById('idea-tags').value.trim();
+    const bodyEl = document.getElementById('idea-body') || document.getElementById('idea-input');
+    const titleEl = document.getElementById('idea-title');
+    const tagsEl = document.getElementById('idea-tags') || document.getElementById('idea-tags-input');
+    const body  = (bodyEl?.value || '').trim();
+    const title = (titleEl?.value || '').trim();
+    const tags  = (tagsEl?.value || '').trim();
     if (!body) { showToast('Write something first!', 'warning'); return; }
     try {
         const idea = await fetchAPI('/api/ideas', {
@@ -2035,9 +2808,9 @@ async function saveIdea() {
         });
         _allIdeas.unshift(idea);
         renderIdeas();
-        document.getElementById('idea-body').value = '';
-        document.getElementById('idea-title').value = '';
-        document.getElementById('idea-tags').value = '';
+        if (bodyEl) bodyEl.value = '';
+        if (titleEl) titleEl.value = '';
+        if (tagsEl) tagsEl.value = '';
         showToast('Idea saved!', 'success');
         // Update brief count
         const el = document.getElementById('brief-ideas');
@@ -2369,7 +3142,7 @@ switchView = function(viewName) {
     if (viewName === 'ideas')     { loadIdeas(); }
     if (viewName === 'git')       { loadGitPanel(); }
     if (viewName === 'workflows') { loadWorkflows(); }
-    if (viewName === 'settings')  { loadSessions(); }
+    if (viewName === 'settings')  { loadSessions(); loadAgentSessions(); }
 };
 
 // ==================== PATCH: extend showMainView for new widgets ====================
@@ -2637,22 +3410,6 @@ function showSkeleton(containerId, rows = 3) {
 })();
 
 
-// ---- QUICK CAPTURE (aside panel) ----
-async function quickCaptureIdea() {
-    const ta = document.getElementById('quick-idea-text');
-    if (!ta) return;
-    const body = ta.value.trim();
-    if (!body) return;
-    try {
-        const r = await apiFetch('/api/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body, title: '', tags: '' }) });
-        if (r.ok) {
-            ta.value = '';
-            showToast('Idea saved!', 'success');
-            loadMorningBrief();
-        }
-    } catch(e) { showToast('Failed to save idea', 'error'); }
-}
-
 // ═══════════════════════════════════════════════════════════
 // VSCARS v13.0 — UI BRIDGE PATCHES
 // ═══════════════════════════════════════════════════════════
@@ -2661,7 +3418,7 @@ async function quickCaptureIdea() {
 const VIEW_LABELS = {
   dashboard:'Home', ideas:'Idea Vault', git:'Git Panel',
   tools:'Terminal', workflows:'Workflows', 'file-browser':'Files',
-  conversations:'AI Chat', activity:'Logs', settings:'Settings',
+  conversations:'AI Chat', 'agent-inbox':'Agent Inbox', activity:'Logs', settings:'Settings',
   billing:'Plan & Billing', admin:'Admin',
 };
 (function patchSwitchViewV13() {
@@ -2743,12 +3500,13 @@ async function quickCaptureIdea() {
   const ta = document.getElementById('quick-idea-text');
   if (!ta || !ta.value.trim()) return;
   try {
-    const r = await apiFetch('/api/ideas', {
+    await fetchAPI('/api/ideas', {
       method:'POST',
-      headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ body: ta.value.trim(), title:'', tags:'' }),
     });
-    if (r.ok) { ta.value = ''; showToast('Idea saved', 'success'); loadMorningBrief(); }
+    ta.value = '';
+    showToast('Idea saved', 'success');
+    loadMorningBrief();
   } catch(e) { showToast('Failed to save', 'error'); }
 }
 
@@ -3014,4 +3772,3 @@ function retryWithModel(modelId) {
         obs.observe(resultEl, { attributes: true, attributeFilter: ['style'] });
     });
 })();
-

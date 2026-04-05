@@ -1,0 +1,248 @@
+{
+  "generated_at": "2026-03-31 21:06:03 UTC",
+  "total": 12,
+  "passed": 12,
+  "failed": 0,
+  "results": [
+    {
+      "case_id": "WEB-001",
+      "description": "Landing page is reachable",
+      "input": {
+        "method": "GET",
+        "path": "/"
+      },
+      "output": {
+        "status_code": 200,
+        "contains": "VSCARS"
+      },
+      "expected": "200 and page contains VSCARS",
+      "status": "PASS"
+    },
+    {
+      "case_id": "WEB-002",
+      "description": "Setup page is reachable",
+      "input": {
+        "method": "GET",
+        "path": "/setup"
+      },
+      "output": {
+        "status_code": 200,
+        "contains": "Setup"
+      },
+      "expected": "200 and setup page loads",
+      "status": "PASS"
+    },
+    {
+      "case_id": "WEB-003",
+      "description": "Connector install script is reachable",
+      "input": {
+        "method": "GET",
+        "path": "/static/install-connector.sh"
+      },
+      "output": {
+        "status_code": 200,
+        "first_line": "#!/usr/bin/env bash"
+      },
+      "expected": "200 and shell script shebang present",
+      "status": "PASS"
+    },
+    {
+      "case_id": "AUTH-001",
+      "description": "First user register (superuser bootstrap)",
+      "input": {
+        "path": "/api/auth/register",
+        "username": "qa_admin"
+      },
+      "output": {
+        "status_code": 200,
+        "body": {
+          "access_token": "eyJhbG...ALyk",
+          "token_type": "***",
+          "user": {
+            "id": 1,
+            "username": "qa_admin",
+            "email": "qa_admin@test.local",
+            "is_superuser": true
+          }
+        }
+      },
+      "expected": "200",
+      "status": "PASS"
+    },
+    {
+      "case_id": "AUTH-002",
+      "description": "Second user register (free plan)",
+      "input": {
+        "path": "/api/auth/register",
+        "username": "qa_user"
+      },
+      "output": {
+        "status_code": 200,
+        "body": {
+          "access_token": "eyJhbG...5zVs",
+          "token_type": "***",
+          "user": {
+            "id": 2,
+            "username": "qa_user",
+            "email": "qa_user@test.local",
+            "is_superuser": false
+          }
+        }
+      },
+      "expected": "200",
+      "status": "PASS"
+    },
+    {
+      "case_id": "BILL-001",
+      "description": "Free plan status and limit",
+      "input": {
+        "method": "GET",
+        "path": "/api/billing/status"
+      },
+      "output": {
+        "status_code": 200,
+        "plan": "free",
+        "daily_limit": 50
+      },
+      "expected": "plan=free and daily_limit=50",
+      "status": "PASS"
+    },
+    {
+      "case_id": "BILL-002",
+      "description": "Free user blocked from API key generation",
+      "input": {
+        "method": "POST",
+        "path": "/api/auth/api-key/generate"
+      },
+      "output": {
+        "status_code": 403,
+        "body": {
+          "detail": {
+            "message": "CLI API keys require a Pro plan or above.",
+            "code": "plan_required",
+            "upgrade_url": "/billing"
+          }
+        }
+      },
+      "expected": "403",
+      "status": "PASS"
+    },
+    {
+      "case_id": "MACH-001",
+      "description": "Free user blocked from machine registration",
+      "input": {
+        "method": "POST",
+        "path": "/api/machines/register",
+        "json": {
+          "machine_id": "qa-machine-1"
+        }
+      },
+      "output": {
+        "status_code": 403,
+        "body": {
+          "detail": {
+            "message": "Machine registration requires a Pro plan or above.",
+            "code": "plan_required",
+            "upgrade_url": "https://vscars.latenightstack.com/#pricing"
+          }
+        }
+      },
+      "expected": "403",
+      "status": "PASS"
+    },
+    {
+      "case_id": "BILL-003",
+      "description": "Pro user can generate API key",
+      "input": {
+        "method": "POST",
+        "path": "/api/auth/api-key/generate"
+      },
+      "output": {
+        "status_code": 200,
+        "api_key_prefix": "vscars...s..."
+      },
+      "expected": "200 with api_key",
+      "status": "PASS"
+    },
+    {
+      "case_id": "MACH-002",
+      "description": "Pro user machine registration via API key",
+      "input": {
+        "method": "POST",
+        "path": "/api/machines/register",
+        "headers": {
+          "X-VSCARS-Key": "***"
+        },
+        "json": {
+          "machine_id": "qa-machine-pro-1",
+          "name": "QA MacBook"
+        }
+      },
+      "output": {
+        "status_code": 200,
+        "body": {
+          "machine_id": "qa-machine-pro-1",
+          "token": "zwdl9-...LcUY",
+          "name": "QA MacBook"
+        }
+      },
+      "expected": "200 with machine token",
+      "status": "PASS"
+    },
+    {
+      "case_id": "TRUST-001",
+      "description": "Sensitive command requires approval",
+      "input": {
+        "method": "POST",
+        "path": "/api/tools/execute",
+        "json": {
+          "tool": "run_command",
+          "command": "echo hello"
+        }
+      },
+      "output": {
+        "status_code": 200,
+        "body": {
+          "success": false,
+          "tool": "run_command",
+          "result": null,
+          "error": "Approval required before execution. Request #1 is pending.",
+          "approval_required": true,
+          "approval_id": 1
+        }
+      },
+      "expected": "200 with approval_required=true",
+      "status": "PASS"
+    },
+    {
+      "case_id": "MACH-003",
+      "description": "After approval, command blocked until agent starts",
+      "input": {
+        "approve": {
+          "method": "POST",
+          "path": "/api/trust/approvals/1/approve"
+        },
+        "retry": {
+          "method": "POST",
+          "path": "/api/tools/execute",
+          "json": {
+            "tool": "run_command",
+            "command": "echo hello"
+          }
+        }
+      },
+      "output": {
+        "approve_status": 200,
+        "retry_status": 503,
+        "retry_detail": {
+          "message": "No machine connected. Install the vscars CLI on your laptop and run `vscars start` to connect it.",
+          "code": "no_machine",
+          "install_cmd": "curl -fsSL https://qa.vscars.local/static/install-connector.sh | bash && vscars init",
+          "setup_url": "https://qa.vscars.local/setup"
+        }
+      },
+      "expected": "retry returns 503 code=no_machine and setup_url/install_cmd",
+      "status": "PASS"
+    }
+  ]
+}

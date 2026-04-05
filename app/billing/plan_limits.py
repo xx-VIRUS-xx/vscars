@@ -5,25 +5,33 @@ from sqlalchemy.orm import Session
 # ─── Plan definitions ──────────────────────────────────────────────────────────
 
 PLAN_LIMITS = {
+    # Free: AI chat only. NO filesystem, terminal, or git access.
+    # Tools run on the user's own machine via the vscars CLI agent (pro+).
+    # Free users never touch the server host's filesystem.
     "free": {
-        "daily_api_calls": 20,
-        "can_run_copilot": False,
-        "can_run_commands": False,
-        "can_edit_files": False,
-        "can_view_files": True,
+        "daily_api_calls": 50,
+        "can_run_copilot": True,   # AI chat (server-side API calls only)
+        "can_run_commands": False,  # no terminal
+        "can_edit_files": False,    # no file writes
+        "can_view_files": False,    # no file reads (no FS access at all)
+        "can_use_machine": False,   # no registered machine
         "label": "Free",
         "price_monthly": 0,
         "price_lifetime": None,
+        "description": "AI Chat only — no machine access",
     },
+    # Pro: full VSCARS on the user's OWN registered machine via vscars CLI
     "pro": {
-        "daily_api_calls": 500,
+        "daily_api_calls": 1000,
         "can_run_copilot": True,
         "can_run_commands": True,
         "can_edit_files": True,
         "can_view_files": True,
+        "can_use_machine": True,   # can register & connect their machine
         "label": "Pro",
         "price_monthly": 9,
         "price_lifetime": None,
+        "description": "Full VSCARS on your own machine",
     },
     "team": {
         "daily_api_calls": -1,  # unlimited
@@ -31,9 +39,11 @@ PLAN_LIMITS = {
         "can_run_commands": True,
         "can_edit_files": True,
         "can_view_files": True,
+        "can_use_machine": True,
         "label": "Team",
         "price_monthly": 29,
         "price_lifetime": None,
+        "description": "Unlimited — multi-machine, shared workspace",
     },
     "self_hosted": {
         "daily_api_calls": -1,  # unlimited
@@ -41,15 +51,28 @@ PLAN_LIMITS = {
         "can_run_commands": True,
         "can_edit_files": True,
         "can_view_files": True,
+        "can_use_machine": True,
         "label": "Self-Hosted",
         "price_monthly": 19,
         "price_lifetime": 49,
+        "description": "Run your own relay server",
     },
 }
 
 
+def issue_api_key(user, db: Session) -> str:
+    """Generate a new CLI API key for the user, store its hash, return the raw key (shown once)."""
+    import secrets
+    import hashlib
+    raw = "vscars_" + secrets.token_urlsafe(32)
+    user.api_key_hash = hashlib.sha256(raw.encode()).hexdigest()
+    db.commit()
+    return raw
+
+
 def apply_plan_to_permissions(user, db: Session) -> None:
-    """Write UserPermission flags to match user.plan. Call after any plan change."""
+    """Write UserPermission flags to match user.plan. Call after any plan change.
+    Also auto-issues a CLI API key when upgrading to a paid plan."""
     from app.database import UserPermission
     limits = PLAN_LIMITS.get(user.plan, PLAN_LIMITS["free"])
 
@@ -62,6 +85,12 @@ def apply_plan_to_permissions(user, db: Session) -> None:
     perm.can_run_commands = limits["can_run_commands"]
     perm.can_edit_files = limits["can_edit_files"]
     perm.can_view_files = limits["can_view_files"]
+    perm.can_use_machine = limits.get("can_use_machine", False)
+
+    # Auto-issue an API key when upgrading to a paid plan (if not already issued)
+    if limits.get("can_use_machine") and not user.api_key_hash:
+        issue_api_key(user, db)
+
     db.commit()
 
 

@@ -1,0 +1,329 @@
+═══════════════════════════════════════════════════════════════════════════════
+                      VSCARS DEPENDENCY DIAGRAM
+═══════════════════════════════════════════════════════════════════════════════
+
+ENTRY POINTS & LAYERS
+─────────────────────────────────────────────────────────────────────────────
+
+LAYER 1: ENTRY POINTS
+├─ main.py                          ← FastAPI Server (Entry)
+│  └─ Uvicorn on :8000
+│
+└─ cli/vscars/cli.py                ← CLI Commands (Entry)
+   └─ → cli/vscars/agent.py
+      └─ → cli/vscars/executor.py
+
+─────────────────────────────────────────────────────────────────────────────
+
+LAYER 2: CONFIGURATION (Foundation)
+├─ app/config.py (82 LOC)           ← Environment variables & settings
+└─ cli/vscars/config.py (42 LOC)    ← CLI config
+
+─────────────────────────────────────────────────────────────────────────────
+
+LAYER 3: PERSISTENCE (Data)
+├─ app/database.py (463 LOC)        ← ORM Models (SQLAlchemy)
+│  ├─ 13 Database Models
+│  ├─ init_db()
+│  └─ get_db() [FastAPI dependency]
+│
+└─ vs_code_controller.db            ← SQLite file
+
+─────────────────────────────────────────────────────────────────────────────
+
+LAYER 4: SECURITY (Authentication & Authorization)
+├─ app/auth.py (159 LOC)            ← JWT & Password Auth
+│  ├─ hash_password()
+│  ├─ create_access_token()
+│  └─ get_current_user() [dependency]
+│
+└─ app/trust.py (181 LOC)           ← Trust Policies
+   ├─ Tool approval workflows
+   └─ Permission-based ACL
+
+─────────────────────────────────────────────────────────────────────────────
+
+LAYER 5: EXECUTION (Core Tools)
+├─ app/tools.py (1,405 LOC)         ← SERVER Tool Execution
+│  ├─ execute_tool()
+│  ├─ File Operations (open, create, edit, delete, list)
+│  ├─ Command Execution (subprocess)
+│  ├─ Git Integration (→ git_ops.py)
+│  ├─ VS Code Integration
+│  ├─ AI/LLM Integration
+│  │  ├─ copilot_chat()
+│  │  ├─ claude_chat()
+│  │  └─ openai_chat()
+│  └─ JARVIS NLP (→ jarvis.py)
+│
+└─ cli/vscars/executor.py (278 LOC) ← CLIENT Tool Execution (mirrors server)
+   ├─ Same tool handlers
+   └─ Runs on user machine
+
+─────────────────────────────────────────────────────────────────────────────
+
+LAYER 6: GIT OPERATIONS
+└─ app/git_ops.py (132 LOC)         ← Git Integration
+   ├─ git_status()
+   ├─ git_diff()
+   ├─ git_stage() / git_unstage()
+   ├─ git_commit()
+   ├─ git_push()
+   ├─ git_log()
+   ├─ git_branches()
+   └─ git_ai_commit_message()
+
+─────────────────────────────────────────────────────────────────────────────
+
+LAYER 7: NLP & INTERPRETATION
+└─ app/jarvis.py (194 LOC)          ← Natural Language Interpreter
+   └─ interpret_command()
+      └─ Convert NL to shell commands
+
+─────────────────────────────────────────────────────────────────────────────
+
+LAYER 8: DATA MODELS & SCHEMAS
+├─ app/schemas.py (116 LOC)         ← Pydantic Models
+│  ├─ UserRegister, UserLogin
+│  ├─ ToolInput, ToolResult
+│  ├─ Token, PermissionResponse
+│  └─ Request validation
+│
+└─ app/relay.py (98 LOC)            ← Agent Communication
+   ├─ Relay server messaging
+   └─ WebSocket frame handling
+
+─────────────────────────────────────────────────────────────────────────────
+
+LAYER 9: UTILITIES & INTEGRATIONS
+├─ app/utils/ngrok_helper.py (63 LOC)  ← Ngrok Tunneling
+│  └─ start_tunnel()
+│
+├─ app/utils/qr_code.py (73 LOC)       ← QR Code Auth
+│  └─ create_qr_auth_token()
+│
+└─ app/email.py (84 LOC)               ← Email Service
+   ├─ send_welcome()
+   ├─ send_password_reset()
+   └─ Resend API integration
+
+─────────────────────────────────────────────────────────────────────────────
+
+LAYER 10: BILLING & LICENSING (Business Logic)
+└─ app/billing/ (669 LOC total)
+   ├─ billing/routes.py (348 LOC)
+   │  ├─ License key endpoints
+   │  ├─ Stripe webhook handling
+   │  └─ Subscription management
+   │
+   ├─ billing/stripe_client.py (97 LOC)
+   │  ├─ Customer creation
+   │  ├─ Subscription management
+   │  └─ Webhook verification
+   │
+   ├─ billing/license.py (78 LOC)
+   │  ├─ generate_license_key()
+   │  ├─ validate_license_key()
+   │  └─ HMAC-SHA256 signing
+   │
+   └─ billing/plan_limits.py (146 LOC)
+      ├─ Free, Pro, Team, Self-Hosted plans
+      ├─ apply_plan_to_permissions()
+      └─ enforce_plan_limits()
+
+─────────────────────────────────────────────────────────────────────────────
+
+LAYER 11: MAIN APPLICATION ROUTER (Central Hub)
+└─ app/main.py (2,336 LOC)          ← FastAPI Application
+   ├─ FastAPI Setup
+   │  ├─ CORS middleware
+   │  ├─ Static file serving
+   │  ├─ Rate limiting (SlowAPI)
+   │  └─ WebSocket support
+   │
+   ├─ Authentication Routes
+   │  ├─ POST /register
+   │  ├─ POST /login
+   │  └─ GET /me
+   │
+   ├─ Tool Routes
+   │  ├─ GET /api/tools
+   │  ├─ POST /api/execute-tool
+   │  └─ WS /ws/{token}
+   │
+   ├─ Permission Routes
+   │  ├─ GET /api/permissions
+   │  ├─ POST /api/request-access
+   │  └─ POST /api/grant-permission
+   │
+   ├─ File Routes
+   │  ├─ GET /api/files
+   │  ├─ GET /api/files/{path}
+   │  └─ POST /api/files/{path}
+   │
+   ├─ Git Routes
+   │  ├─ GET /api/git/status
+   │  ├─ GET /api/git/log
+   │  ├─ POST /api/git/commit
+   │  └─ POST /api/git/push
+   │
+   ├─ AI Routes
+   │  ├─ POST /api/copilot/chat
+   │  └─ POST /api/chat
+   │
+   └─ Billing Routes (mounted)
+      └─ Include app.billing.routes
+
+─────────────────────────────────────────────────────────────────────────────
+
+LAYER 12: WEB FRAMEWORK (Framework Foundation)
+├─ fastapi>=0.104.0          ← API framework
+├─ uvicorn>=0.24.0           ← ASGI server
+├─ slowapi>=0.1.9            ← Rate limiting
+├─ websockets>=12.0          ← WebSocket support
+└─ sqlalchemy>=2.0.0         ← ORM
+
+─────────────────────────────────────────────────────────────────────────────
+
+LAYER 13: EXTERNAL INTEGRATIONS
+├─ Stripe API                ← Billing & Subscriptions
+├─ Resend API                ← Email service
+├─ GitHub Models API         ← Copilot integration
+├─ OpenAI / Anthropic        ← Claude/GPT integration
+├─ Ngrok Service             ← Public tunneling
+└─ Git Repository            ← Local git operations
+
+═══════════════════════════════════════════════════════════════════════════════
+
+KEY DEPENDENCY PATHS
+─────────────────────────────────────────────────────────────────────────────
+
+1. CLIENT REQUEST → AUTHORIZATION → TOOL EXECUTION
+   ┌────────────────────────────────────────────────────────────┐
+   │ HTTP/WS Request                                             │
+   │    ↓                                                        │
+   │ main.py route handler                                       │
+   │    ↓                                                        │
+   │ get_current_user() [auth.py] ← JWT validation              │
+   │    ↓                                                        │
+   │ check_permission() [trust.py] ← Tool permission check      │
+   │    ↓                                                        │
+   │ execute_tool() [tools.py]                                   │
+   │    ├─ File operations (pathlib, os)                        │
+   │    ├─ Git operations (subprocess, git_ops.py)              │
+   │    ├─ Command execution (subprocess)                        │
+   │    ├─ AI/LLM (requests, API keys)                          │
+   │    └─ JARVIS NLP [jarvis.py]                               │
+   │    ↓                                                        │
+   │ Response (REST or WebSocket)                                │
+   └────────────────────────────────────────────────────────────┘
+
+2. AGENT EXECUTION FLOW
+   ┌────────────────────────────────────────────────────────────┐
+   │ cli.py start command                                        │
+   │    ↓                                                        │
+   │ agent.py (persistent WebSocket client)                      │
+   │    ↓                                                        │
+   │ Connect to relay server via WebSocket                       │
+   │    ↓                                                        │
+   │ Listen for tool_call messages (ping every 25s)              │
+   │    ↓                                                        │
+   │ executor.py (local tool execution)                          │
+   │    ├─ File operations (same as server)                      │
+   │    ├─ Command execution (same as server)                    │
+   │    └─ Path validation (_resolve)                            │
+   │    ↓                                                        │
+   │ Send results back via WebSocket                             │
+   └────────────────────────────────────────────────────────────┘
+
+3. DATABASE DEPENDENCY
+   ┌────────────────────────────────────────────────────────────┐
+   │ ANY Module                                                  │
+   │    ↓                                                        │
+   │ database.py get_db() [dependency]                           │
+   │    ↓                                                        │
+   │ SQLAlchemy SessionLocal                                     │
+   │    ↓                                                        │
+   │ vs_code_controller.db (SQLite)                              │
+   │    ├─ User (username, email, permissions)                  │
+   │    ├─ CommandLog (execution history)                        │
+   │    ├─ AgentTask (pending tasks)                             │
+   │    ├─ LicenseKey (subscription)                             │
+   │    └─ Other models...                                       │
+   └────────────────────────────────────────────────────────────┘
+
+4. BILLING PIPELINE
+   ┌────────────────────────────────────────────────────────────┐
+   │ User signs up                                               │
+   │    ↓                                                        │
+   │ billing/routes.py → POST /billing/subscribe                 │
+   │    ↓                                                        │
+   │ stripe_client.py → create_customer()                        │
+   │    ↓                                                        │
+   │ Stripe API → create subscription                            │
+   │    ↓                                                        │
+   │ Stripe Webhook → POST /billing/webhook                      │
+   │    ↓                                                        │
+   │ billing/license.py → generate_license_key()                 │
+   │    ↓                                                        │
+   │ billing/plan_limits.py → apply_plan_to_permissions()        │
+   │    ↓                                                        │
+   │ database.py → Save LicenseKey model                         │
+   └────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+
+CROSS-CUTTING CONCERNS
+─────────────────────────────────────────────────────────────────────────────
+
+SECURITY:
+  ├─ app/auth.py                 ← JWT & password auth
+  ├─ app/trust.py                ← Permission policies
+  ├─ app/tools.py::_resolve()    ← Path validation (security boundary)
+  └─ main.py rate limiter        ← Prevent brute force
+
+LOGGING & MONITORING:
+  ├─ app/database.py::CommandLog ← Command execution logs
+  └─ app/database.py::ConversationHistory ← AI chat logs
+
+ERROR HANDLING:
+  ├─ HTTPException               ← FastAPI error responses
+  ├─ WebSocketDisconnect         ← WebSocket error handling
+  └─ subprocess timeouts         ← Command timeout protection
+
+═══════════════════════════════════════════════════════════════════════════════
+
+FILE IMPORT SUMMARY
+─────────────────────────────────────────────────────────────────────────────
+
+main.py imports from:
+  • app.database (all models)
+  • app.git_ops (git functions)
+  • app.schemas (Pydantic models)
+  • app.auth (JWT functions)
+  • app.config (settings)
+  • app.tools (tool execution)
+  • app.relay (relay communication)
+  • app.utils.qr_code (QR generation)
+  • app.utils.ngrok_helper (Ngrok)
+  • app.billing.routes (billing router)
+  • app.email (email functions)
+  • app.billing.plan_limits (plan enforcement)
+  • app.trust (trust policies)
+
+tools.py imports from:
+  • app.jarvis (NLP interpreter)
+  • app.config (settings)
+  • subprocess (command execution)
+  • os/pathlib (file operations)
+
+executor.py imports from:
+  • os/subprocess (same as tools.py)
+  • pathlib (file operations)
+
+agent.py imports from:
+  • vscars.executor (tool execution)
+  • vscars.config (config)
+  • websockets (WebSocket client)
+
+═══════════════════════════════════════════════════════════════════════════════

@@ -33,6 +33,10 @@ class UserResponse(UserBase):
     is_superuser: bool
     is_active: bool
     plan: str = "free"
+    can_run_copilot: bool = False
+    can_run_commands: bool = False
+    can_edit_files: bool = False
+    can_view_files: bool = False
     daily_api_calls: int = 0
     trial_ends_at: Optional[datetime] = None
     created_at: datetime
@@ -85,6 +89,12 @@ class ToolResult(BaseModel):
     tool: str
     result: Optional[str] = None
     error: Optional[str] = None
+    approval_required: Optional[bool] = None
+    approval_id: Optional[int] = None
+    task_id: Optional[int] = None
+    agent_session_id: Optional[int] = None
+    crawler_url: Optional[str] = None
+    status: Optional[str] = None
 
 
 # Billing Schemas

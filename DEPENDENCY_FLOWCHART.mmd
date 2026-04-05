@@ -1,0 +1,86 @@
+flowchart LR
+  %% Generated from Python imports (project-only)
+  subgraph "root"
+    Nf1bdda93d9["main.py"]
+  end
+  subgraph "app"
+    N6b5a07a517["app/__init__.py"]
+    Nb4250f57fe["app/auth.py"]
+    N280aea734f["app/billing/__init__.py"]
+    N71c9094f82["app/billing/license.py"]
+    N1fa11959c6["app/billing/plan_limits.py"]
+    N737d123f7d["app/billing/routes.py"]
+    Nc9913f843b["app/billing/stripe_client.py"]
+    Ne455b71ce5["app/config.py"]
+    N76944dfe74["app/database.py"]
+    Nf31736a5b3["app/email.py"]
+    Na5e7630d46["app/git_ops.py"]
+    N04cd70eef0["app/jarvis.py"]
+    N60a964aea4["app/main.py"]
+    N480c025f83["app/relay.py"]
+    Nfb299c2a6a["app/schemas.py"]
+    Nf2358cbe4b["app/tools.py"]
+    N6bbe05f300["app/trust.py"]
+    Nf068d68be8["app/utils/__init__.py"]
+    N21f142748a["app/utils/ngrok_helper.py"]
+    N7d04c69d3f["app/utils/qr_code.py"]
+  end
+  subgraph "vscars-cli"
+    N75a3ce5c74["cli/vscars/__init__.py"]
+    Nc77a707475["cli/vscars/agent.py"]
+    N2b0a7ec62f["cli/vscars/cli.py"]
+    N51a0bab0fe["cli/vscars/config.py"]
+    Nbf17af127c["cli/vscars/executor.py"]
+  end
+  subgraph "cli"
+    Neef597c0b5["cli/setup.py"]
+  end
+  subgraph "scripts"
+    N1e7006573a["scripts/run_subscription_setup_checks.py"]
+  end
+  subgraph "archive"
+    N2fbecbd65e["archive/self-healing/self_healing.py"]
+  end
+  Nb4250f57fe --> Ne455b71ce5
+  Nb4250f57fe --> N76944dfe74
+  N71c9094f82 --> Ne455b71ce5
+  N1fa11959c6 --> N76944dfe74
+  N737d123f7d --> Nb4250f57fe
+  N737d123f7d --> N71c9094f82
+  N737d123f7d --> N1fa11959c6
+  N737d123f7d --> Nc9913f843b
+  N737d123f7d --> N76944dfe74
+  Nc9913f843b --> Ne455b71ce5
+  N76944dfe74 --> Ne455b71ce5
+  Nf31736a5b3 --> Ne455b71ce5
+  Na5e7630d46 --> Ne455b71ce5
+  Na5e7630d46 --> Nf2358cbe4b
+  N60a964aea4 --> Nb4250f57fe
+  N60a964aea4 --> N1fa11959c6
+  N60a964aea4 --> N737d123f7d
+  N60a964aea4 --> Ne455b71ce5
+  N60a964aea4 --> N76944dfe74
+  N60a964aea4 --> Nf31736a5b3
+  N60a964aea4 --> Na5e7630d46
+  N60a964aea4 --> N480c025f83
+  N60a964aea4 --> Nfb299c2a6a
+  N60a964aea4 --> Nf2358cbe4b
+  N60a964aea4 --> N6bbe05f300
+  N60a964aea4 --> N21f142748a
+  N60a964aea4 --> N7d04c69d3f
+  Nf2358cbe4b --> Ne455b71ce5
+  Nf2358cbe4b --> N04cd70eef0
+  N21f142748a --> Ne455b71ce5
+  N2fbecbd65e --> Ne455b71ce5
+  N2fbecbd65e --> N76944dfe74
+  N2fbecbd65e --> Nf2358cbe4b
+  Nc77a707475 --> N51a0bab0fe
+  Nc77a707475 --> Nbf17af127c
+  N2b0a7ec62f --> N75a3ce5c74
+  N2b0a7ec62f --> Nc77a707475
+  N2b0a7ec62f --> N51a0bab0fe
+  Nf1bdda93d9 --> Ne455b71ce5
+  Nf1bdda93d9 --> N60a964aea4
+  N1e7006573a --> N1fa11959c6
+  N1e7006573a --> N76944dfe74
+  N1e7006573a --> N60a964aea4

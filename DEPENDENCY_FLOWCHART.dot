@@ -1,0 +1,108 @@
+digraph vscars_deps {
+  rankdir=LR;
+  concentrate=true;
+  node [shape=box, style="rounded,filled", fillcolor="#f7f7f7", fontsize=10];
+  edge [color="#555555", arrowsize=0.7];
+  subgraph cluster_0 {
+    label="root";
+    style="rounded";
+    color="#fff3cd";
+    "main.py";
+  }
+  subgraph cluster_1 {
+    label="app";
+    style="rounded";
+    color="#d1e7dd";
+    "app/__init__.py";
+    "app/auth.py";
+    "app/billing/__init__.py";
+    "app/billing/license.py";
+    "app/billing/plan_limits.py";
+    "app/billing/routes.py";
+    "app/billing/stripe_client.py";
+    "app/config.py";
+    "app/database.py";
+    "app/email.py";
+    "app/git_ops.py";
+    "app/jarvis.py";
+    "app/main.py";
+    "app/relay.py";
+    "app/schemas.py";
+    "app/tools.py";
+    "app/trust.py";
+    "app/utils/__init__.py";
+    "app/utils/ngrok_helper.py";
+    "app/utils/qr_code.py";
+  }
+  subgraph cluster_2 {
+    label="vscars-cli";
+    style="rounded";
+    color="#cfe2ff";
+    "cli/vscars/__init__.py";
+    "cli/vscars/agent.py";
+    "cli/vscars/cli.py";
+    "cli/vscars/config.py";
+    "cli/vscars/executor.py";
+  }
+  subgraph cluster_3 {
+    label="cli";
+    style="rounded";
+    color="#cfe2ff";
+    "cli/setup.py";
+  }
+  subgraph cluster_4 {
+    label="scripts";
+    style="rounded";
+    color="#e2e3e5";
+    "scripts/run_subscription_setup_checks.py";
+  }
+  subgraph cluster_5 {
+    label="archive";
+    style="rounded";
+    color="#f8d7da";
+    "archive/self-healing/self_healing.py";
+  }
+  "app/auth.py" -> "app/config.py";
+  "app/auth.py" -> "app/database.py";
+  "app/billing/license.py" -> "app/config.py";
+  "app/billing/plan_limits.py" -> "app/database.py";
+  "app/billing/routes.py" -> "app/auth.py";
+  "app/billing/routes.py" -> "app/billing/license.py";
+  "app/billing/routes.py" -> "app/billing/plan_limits.py";
+  "app/billing/routes.py" -> "app/billing/stripe_client.py";
+  "app/billing/routes.py" -> "app/database.py";
+  "app/billing/stripe_client.py" -> "app/config.py";
+  "app/database.py" -> "app/config.py";
+  "app/email.py" -> "app/config.py";
+  "app/git_ops.py" -> "app/config.py";
+  "app/git_ops.py" -> "app/tools.py";
+  "app/main.py" -> "app/auth.py";
+  "app/main.py" -> "app/billing/plan_limits.py";
+  "app/main.py" -> "app/billing/routes.py";
+  "app/main.py" -> "app/config.py";
+  "app/main.py" -> "app/database.py";
+  "app/main.py" -> "app/email.py";
+  "app/main.py" -> "app/git_ops.py";
+  "app/main.py" -> "app/relay.py";
+  "app/main.py" -> "app/schemas.py";
+  "app/main.py" -> "app/tools.py";
+  "app/main.py" -> "app/trust.py";
+  "app/main.py" -> "app/utils/ngrok_helper.py";
+  "app/main.py" -> "app/utils/qr_code.py";
+  "app/tools.py" -> "app/config.py";
+  "app/tools.py" -> "app/jarvis.py";
+  "app/utils/ngrok_helper.py" -> "app/config.py";
+  "archive/self-healing/self_healing.py" -> "app/config.py";
+  "archive/self-healing/self_healing.py" -> "app/database.py";
+  "archive/self-healing/self_healing.py" -> "app/tools.py";
+  "cli/vscars/agent.py" -> "cli/vscars/config.py";
+  "cli/vscars/agent.py" -> "cli/vscars/executor.py";
+  "cli/vscars/cli.py" -> "cli/vscars/__init__.py";
+  "cli/vscars/cli.py" -> "cli/vscars/agent.py";
+  "cli/vscars/cli.py" -> "cli/vscars/config.py";
+  "main.py" -> "app/config.py";
+  "main.py" -> "app/main.py";
+  "scripts/run_subscription_setup_checks.py" -> "app/billing/plan_limits.py";
+  "scripts/run_subscription_setup_checks.py" -> "app/database.py";
+  "scripts/run_subscription_setup_checks.py" -> "app/main.py";
+}
