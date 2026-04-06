@@ -6,8 +6,11 @@ let _sessionExpired = false;
 let _tokenExpiryTimer = null;
 let currentAgentSessionId = Number(localStorage.getItem('currentAgentSessionId') || '0') || null;
 let _agentSessions = [];
+let _scrumItems = [];
+let _scrumRunnerState = null;
 let _agentInboxSessionId = null;
 let _agentSessionsTimer = null;
+let _scrumRunnerTimer = null;
 const _tabId = Math.random().toString(36).slice(2);
 const _agentNotifyChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('vscars-agent-notify') : null;
 const apiFetch = (...args) => fetchAPI(...args);
@@ -703,6 +706,10 @@ function logout() {
         clearInterval(_agentSessionsTimer);
         _agentSessionsTimer = null;
     }
+    if (_scrumRunnerTimer) {
+        clearInterval(_scrumRunnerTimer);
+        _scrumRunnerTimer = null;
+    }
     clearErrors();
     showToast('Signed out', 'info');
     showAuthView();
@@ -743,6 +750,12 @@ function showMainView() {
     _agentSessionsTimer = setInterval(() => {
         if (document.getElementById('settings-view')?.classList.contains('active')) loadAgentSessions();
     }, 8000);
+    if (_scrumRunnerTimer) clearInterval(_scrumRunnerTimer);
+    _scrumRunnerTimer = setInterval(() => {
+        const scrumViewActive = document.getElementById('scrum-view')?.classList.contains('active');
+        const runnerActive = Boolean(_scrumRunnerState?.runner?.running);
+        if (scrumViewActive || runnerActive) loadScrumRunnerStatus(true).catch(() => {});
+    }, 5000);
     if (window.Notification && Notification.permission === 'default') {
         Notification.requestPermission().catch(() => {});
     }
@@ -776,6 +789,9 @@ function switchView(viewName) {
     // Load view-specific data
     if (viewName === 'admin') {
         loadAdminPanel();
+    } else if (viewName === 'scrum') {
+        loadScrumBoard();
+        loadScrumRunnerStatus(true);
     } else if (viewName === 'activity') {
         loadActivityLog();
     } else if (viewName === 'conversations') {
@@ -2744,6 +2760,217 @@ async function loadDashboardGit() {
 let _allIdeas = [];
 let _ideaFilter = 'all';
 
+function scrumTypeLabel(type) {
+    const map = { bug: 'Bug', story: 'Story', task: 'Task' };
+    return map[type] || type || 'Item';
+}
+
+function scrumStatusLabel(status) {
+    const map = { backlog: 'Backlog', todo: 'Todo', in_progress: 'In Progress', review: 'Review', done: 'Done' };
+    return map[status] || status || 'Unknown';
+}
+
+function renderScrumParentOptions() {
+    const select = document.getElementById('scrum-parent-story-input');
+    if (!select) return;
+    const stories = _scrumItems.filter(item => item.item_type === 'story');
+    select.innerHTML = '<option value="">No parent story</option>' + stories.map(story =>
+        `<option value="${story.id}">#${story.id} · ${escapeHtml(story.title || 'Story')}</option>`
+    ).join('');
+}
+
+function renderScrumColumn(targetId, items) {
+    const container = document.getElementById(targetId);
+    if (!container) return;
+    if (!items.length) {
+        container.innerHTML = '<p class="placeholder">No items yet</p>';
+        return;
+    }
+    const storiesById = new Map(_scrumItems.filter(i => i.item_type === 'story').map(i => [i.id, i]));
+    container.innerHTML = items.map(item => {
+        const parent = item.parent_id ? storiesById.get(item.parent_id) : null;
+        const desc = (item.description || '').trim();
+        const shortDesc = desc.length > 200 ? `${desc.slice(0, 200)}...` : desc;
+        return `
+            <article class="scrum-card">
+                <div class="scrum-card-head">
+                    <div class="scrum-card-title">${escapeHtml(item.title || 'Untitled')}</div>
+                    <span class="scrum-chip ${escapeHtml(item.item_type || 'task')}">${escapeHtml(scrumTypeLabel(item.item_type))}</span>
+                </div>
+                <div class="scrum-meta">
+                    ${escapeHtml(item.priority || 'medium')} priority
+                    ${item.story_points ? ` · ${escapeHtml(String(item.story_points))} pts` : ''}
+                    ${parent ? ` · Story: ${escapeHtml(parent.title || `#${item.parent_id}`)}` : ''}
+                </div>
+                ${shortDesc ? `<div class="scrum-desc">${escapeHtml(shortDesc)}</div>` : ''}
+                <div class="scrum-controls">
+                    <select onchange="updateScrumItemStatus(${item.id}, this.value)">
+                        <option value="backlog" ${item.status === 'backlog' ? 'selected' : ''}>Backlog</option>
+                        <option value="todo" ${item.status === 'todo' ? 'selected' : ''}>Todo</option>
+                        <option value="in_progress" ${item.status === 'in_progress' ? 'selected' : ''}>In Progress</option>
+                        <option value="review" ${item.status === 'review' ? 'selected' : ''}>Review</option>
+                        <option value="done" ${item.status === 'done' ? 'selected' : ''}>Done</option>
+                    </select>
+                    <button class="btn-sm btn-danger" onclick="deleteScrumItem(${item.id})">Delete</button>
+                </div>
+            </article>`;
+    }).join('');
+}
+
+function renderScrumBoard() {
+    renderScrumParentOptions();
+    renderScrumColumn('scrum-bugs-list', _scrumItems.filter(item => item.item_type === 'bug'));
+    renderScrumColumn('scrum-stories-list', _scrumItems.filter(item => item.item_type === 'story'));
+    renderScrumColumn('scrum-tasks-list', _scrumItems.filter(item => item.item_type === 'task'));
+}
+
+function scrumRunnerStateLabel(runner = {}) {
+    if (runner.running && runner.stop_requested) return 'Stopping';
+    if (runner.running) return 'Running';
+    if (runner.last_error) return 'Blocked';
+    return 'Idle';
+}
+
+function renderScrumRunnerStatus(data = {}) {
+    _scrumRunnerState = data || {};
+    const runner = data.runner || {};
+    const pill = document.getElementById('scrum-runner-pill');
+    const summary = document.getElementById('scrum-runner-summary');
+    const current = document.getElementById('scrum-runner-current');
+    const startBtn = document.getElementById('scrum-runner-start-btn');
+    const stopBtn = document.getElementById('scrum-runner-stop-btn');
+    const pathInput = document.getElementById('scrum-runner-project-path');
+    const allowTools = document.getElementById('scrum-runner-allow-tools');
+    const allowSelf = document.getElementById('scrum-runner-allow-self-work');
+    const stateLabel = scrumRunnerStateLabel(runner);
+    if (pill) {
+        pill.textContent = stateLabel;
+        pill.className = `scrum-runner-pill ${stateLabel.toLowerCase()}`;
+    }
+    if (summary) {
+        const config = runner.config || {};
+        const bits = [
+            `${Number(data.pending_task_count || 0)} queued task(s)`,
+            `${Number(runner.completed_count || 0)} completed this run`,
+        ];
+        if (config.project_path) bits.push(config.project_path);
+        summary.textContent = bits.join(' · ');
+    }
+    if (current) {
+        const bits = [];
+        if (data.current_item) bits.push(`Current item: #${data.current_item.id} · ${data.current_item.title}`);
+        if (data.current_agent_task) bits.push(`Agent task #${data.current_agent_task.id} · ${data.current_agent_task.status}`);
+        if (runner.last_error) bits.push(`Last error: ${runner.last_error}`);
+        current.textContent = bits.join(' | ') || 'Autonomous mode is idle.';
+    }
+    if (pathInput && runner.config?.project_path && document.activeElement !== pathInput) pathInput.value = runner.config.project_path;
+    if (allowTools && runner.config?.allow_tools) allowTools.value = runner.config.allow_tools;
+    if (allowSelf) allowSelf.checked = Boolean(runner.config?.allow_self_work);
+    if (startBtn) startBtn.disabled = Boolean(runner.running);
+    if (stopBtn) stopBtn.disabled = !runner.running;
+}
+
+async function loadScrumRunnerStatus(silent = false) {
+    try {
+        const data = await fetchAPI('/api/scrum/runner');
+        renderScrumRunnerStatus(data);
+        return data;
+    } catch (e) {
+        if (!silent) showToast(`Could not load autonomous status: ${e.message}`, 'error');
+        throw e;
+    }
+}
+
+async function loadScrumBoard() {
+    try {
+        const data = await fetchAPI('/api/scrum/items');
+        _scrumItems = data.items || [];
+        renderScrumBoard();
+    } catch (e) {
+        ['scrum-bugs-list', 'scrum-stories-list', 'scrum-tasks-list'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = `<p class="placeholder">Could not load scrum items: ${escapeHtml(e.message)}</p>`;
+        });
+    }
+}
+
+async function saveScrumItem() {
+    const payload = {
+        item_type: document.getElementById('scrum-type-input')?.value || 'task',
+        title: (document.getElementById('scrum-title-input')?.value || '').trim(),
+        description: (document.getElementById('scrum-desc-input')?.value || '').trim(),
+        status: document.getElementById('scrum-status-input')?.value || 'todo',
+        priority: document.getElementById('scrum-priority-input')?.value || 'medium',
+        parent_id: document.getElementById('scrum-parent-story-input')?.value || '',
+        story_points: document.getElementById('scrum-points-input')?.value || '',
+        tags: (document.getElementById('scrum-tags-input')?.value || '').trim(),
+    };
+    if (!payload.title) {
+        showToast('Title is required', 'warning');
+        return;
+    }
+    try {
+        await fetchAPI('/api/scrum/items', { method: 'POST', body: JSON.stringify(payload) });
+        ['scrum-title-input', 'scrum-desc-input', 'scrum-points-input', 'scrum-tags-input'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        showToast(`${scrumTypeLabel(payload.item_type)} created`, 'success');
+        await loadScrumBoard();
+    } catch (e) {
+        showToast(`Failed to create scrum item: ${e.message}`, 'error');
+    }
+}
+
+async function updateScrumItemStatus(id, status) {
+    try {
+        await fetchAPI(`/api/scrum/items/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+        await loadScrumBoard();
+        showToast(`Moved to ${scrumStatusLabel(status)}`, 'success');
+    } catch (e) {
+        showToast(`Failed to update item: ${e.message}`, 'error');
+    }
+}
+
+async function deleteScrumItem(id) {
+    if (!confirm('Delete this scrum item?')) return;
+    try {
+        await fetchAPI(`/api/scrum/items/${id}`, { method: 'DELETE' });
+        await loadScrumBoard();
+        showToast('Scrum item deleted', 'success');
+    } catch (e) {
+        showToast(`Failed to delete item: ${e.message}`, 'error');
+    }
+}
+
+async function startScrumRunner() {
+    const payload = {
+        project_path: (document.getElementById('scrum-runner-project-path')?.value || '').trim(),
+        allow_tools: document.getElementById('scrum-runner-allow-tools')?.value || 'read',
+        allow_self_work: Boolean(document.getElementById('scrum-runner-allow-self-work')?.checked),
+    };
+    try {
+        const data = await fetchAPI('/api/scrum/runner/start', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+        showToast(data.message || 'Autonomous mode started', 'success');
+        await Promise.all([loadScrumRunnerStatus(true), loadScrumBoard()]);
+    } catch (e) {
+        showToast(`Could not start autonomous mode: ${e.message}`, 'error');
+    }
+}
+
+async function stopScrumRunner() {
+    try {
+        const data = await fetchAPI('/api/scrum/runner/stop', { method: 'POST' });
+        showToast(data.message || 'Autonomous stop requested', 'success');
+        await loadScrumRunnerStatus(true);
+    } catch (e) {
+        showToast(`Could not stop autonomous mode: ${e.message}`, 'error');
+    }
+}
+
 async function loadIdeas() {
     try {
         const data = await fetchAPI('/api/ideas');
@@ -2827,7 +3054,11 @@ async function toggleIdeaDone(id, isDone) {
             body: JSON.stringify({ is_done: isDone })
         });
         const idx = _allIdeas.findIndex(i => i.id === id);
-        if (idx >= 0) _allIdeas[idx].is_done = isDone;
+        if (idx >= 0) {
+            _allIdeas[idx].is_done = isDone;
+            if (isDone) _allIdeas[idx].stage = 'shipped';
+            else if ((_allIdeas[idx].stage || '') === 'shipped') _allIdeas[idx].stage = 'captured';
+        }
         renderIdeas();
         showToast(isDone ? 'Marked as shipped ✓' : 'Back to pending', 'success');
     } catch (e) {

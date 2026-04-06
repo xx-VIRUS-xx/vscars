@@ -262,6 +262,22 @@ class ToolApproval(Base):
     resolved_at = Column(DateTime, nullable=True)
     consumed_at = Column(DateTime, nullable=True)
 
+class ScrumItem(Base):
+    __tablename__ = "scrum_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, index=True)
+    item_type = Column(String, index=True)
+    title = Column(String)
+    description = Column(Text, nullable=True)
+    status = Column(String, default="todo", index=True)
+    priority = Column(String, default="medium")
+    parent_id = Column(Integer, index=True, nullable=True)
+    story_points = Column(Integer, nullable=True)
+    tags = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
 class AgentTask(Base):
     __tablename__ = "agent_tasks"
 
@@ -277,6 +293,7 @@ class AgentTask(Base):
     finished_at = Column(DateTime, nullable=True)
     notified = Column(Boolean, default=False, index=True)
     agent_session_id = Column(Integer, index=True, nullable=True)
+    scrum_item_id = Column(Integer, index=True, nullable=True)
 
 
 class AgentSession(Base):
@@ -314,6 +331,7 @@ def init_db():
     _migrate_add_tool_approval_columns()
     _migrate_add_agent_session_columns()
     _migrate_add_agent_task_columns()
+    _migrate_add_scrum_columns()
 
 def _migrate_add_billing_columns():
     """Add billing columns to existing 'users' table if they don't exist yet.
@@ -443,6 +461,7 @@ def _migrate_add_agent_task_columns():
 
         new_cols = [
             ("agent_session_id", "INTEGER"),
+            ("scrum_item_id", "INTEGER"),
         ]
         for col_name, col_def in new_cols:
             if col_name not in existing:
@@ -454,6 +473,36 @@ def _migrate_add_agent_task_columns():
                     log.info("Migration: added column agent_tasks.%s", col_name)
                 except Exception as exc:
                     log.debug("Migration skip agent_tasks.%s: %s", col_name, exc)
+
+
+def _migrate_add_scrum_columns():
+    import sqlalchemy as sa
+    with engine.connect() as conn:
+        try:
+            result = conn.execute(sa.text("PRAGMA table_info(scrum_items)"))
+            existing = {row[1] for row in result}
+        except Exception:
+            return
+
+        new_cols = [
+            ("description", "TEXT"),
+            ("status", "VARCHAR DEFAULT 'todo'"),
+            ("priority", "VARCHAR DEFAULT 'medium'"),
+            ("parent_id", "INTEGER"),
+            ("story_points", "INTEGER"),
+            ("tags", "VARCHAR"),
+            ("updated_at", "DATETIME"),
+        ]
+        for col_name, col_def in new_cols:
+            if col_name not in existing:
+                try:
+                    conn.execute(sa.text(
+                        f"ALTER TABLE scrum_items ADD COLUMN {col_name} {col_def}"
+                    ))
+                    conn.commit()
+                    log.info("Migration: added column scrum_items.%s", col_name)
+                except Exception as exc:
+                    log.debug("Migration skip scrum_items.%s: %s", col_name, exc)
 
 
 def _migrate_add_agent_session_columns():

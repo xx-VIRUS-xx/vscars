@@ -81,6 +81,35 @@ input,textarea,select{font:inherit}
 a{color:var(--a);text-decoration:none}
 a:hover{opacity:0.8}
 
+.scrum-layout{display:grid;grid-template-columns:minmax(0,1.8fr) minmax(280px,.9fr);gap:20px;align-items:start}
+.scrum-columns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.scrum-column{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:16px;min-height:420px;overflow:hidden}
+.scrum-column-head{padding:12px 14px;font-size:12px;font-weight:700;color:var(--t1);text-transform:uppercase;letter-spacing:.8px;border-bottom:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.02)}
+.scrum-list{padding:12px;display:flex;flex-direction:column;gap:10px}
+.scrum-card{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.028);border-radius:14px;padding:12px}
+.scrum-card-head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start;margin-bottom:6px}
+.scrum-card-title{font-size:14px;font-weight:700;color:var(--t1);line-height:1.35}
+.scrum-chip{display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;padding:4px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.1);color:var(--t2)}
+.scrum-chip.bug{color:#fca5a5;border-color:rgba(248,113,113,.25);background:rgba(127,29,29,.18)}
+.scrum-chip.story{color:#93c5fd;border-color:rgba(96,165,250,.25);background:rgba(30,58,138,.18)}
+.scrum-chip.task{color:#86efac;border-color:rgba(74,222,128,.25);background:rgba(20,83,45,.18)}
+.scrum-meta{font-size:11px;color:var(--t2);margin-bottom:8px}
+.scrum-desc{font-size:12px;color:var(--t2);line-height:1.5;white-space:pre-wrap;margin-bottom:10px}
+.scrum-controls{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+.scrum-controls select{margin:0}
+.scrum-runner-panel{margin-bottom:16px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);border-radius:16px;padding:14px}
+.scrum-runner-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:12px}
+.scrum-runner-pill{display:inline-flex;align-items:center;justify-content:center;min-width:78px;padding:5px 10px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;border:1px solid rgba(255,255,255,.12)}
+.scrum-runner-pill.running{color:#86efac;background:rgba(20,83,45,.22);border-color:rgba(74,222,128,.25)}
+.scrum-runner-pill.stopping{color:#fcd34d;background:rgba(120,53,15,.24);border-color:rgba(251,191,36,.28)}
+.scrum-runner-pill.blocked{color:#fca5a5;background:rgba(127,29,29,.2);border-color:rgba(248,113,113,.25)}
+.scrum-runner-pill.idle{color:var(--t2);background:rgba(255,255,255,.05)}
+.scrum-runner-summary{font-size:12px;line-height:1.5;color:var(--t2);margin-bottom:10px}
+.scrum-runner-toggle{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--t2);margin-bottom:10px}
+.scrum-runner-toggle input{accent-color:var(--a)}
+.scrum-runner-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.scrum-runner-current{margin-top:10px;line-height:1.5}
+
 /* ── APP BACKGROUND — aurora layers ──────────────────────────── */
 body::before {
   content:'';

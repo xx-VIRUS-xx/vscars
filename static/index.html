@@ -89,6 +89,8 @@
 
     <button class="nav-item active" data-view="dashboard" title="Home"
       style="font-size:17px">⌘</button>
+    <button class="nav-item" data-view="scrum"         title="Scrum"
+      style="font-size:14px">☰</button>
     <button class="nav-item" data-view="ideas"         title="Ideas"
       style="font-size:14px;font-weight:700;letter-spacing:-1px">◈</button>
     <button class="nav-item" data-view="git"           title="Git"
@@ -195,6 +197,11 @@
                 <span class="ac-name">Capture Idea</span>
                 <span class="ac-sub">Idea Vault</span>
               </button>
+              <button onclick="switchView('scrum')" class="action-card">
+                <span class="ac-icon">☰</span>
+                <span class="ac-name">Scrum Board</span>
+                <span class="ac-sub">Bugs, stories, tasks</span>
+              </button>
               <button onclick="switchView('git')" class="action-card">
                 <span class="ac-icon">⎇</span>
                 <span class="ac-name">Git Panel</span>
@@ -259,6 +266,90 @@
             </div>
 
           </div>
+        </div>
+      </div>
+
+      <!-- ─── SCRUM ─── -->
+      <div id="scrum-view" class="view">
+        <div class="view-head">
+          <h2>Scrum Dashboard</h2>
+          <div class="view-actions">
+            <button onclick="loadScrumBoard()" class="btn-sm">↻ Refresh</button>
+          </div>
+        </div>
+        <div class="scrum-layout">
+          <div class="scrum-columns">
+            <section class="scrum-column">
+              <div class="scrum-column-head">Bugs</div>
+              <div id="scrum-bugs-list" class="scrum-list"><p class="placeholder">Loading…</p></div>
+            </section>
+            <section class="scrum-column">
+              <div class="scrum-column-head">Stories</div>
+              <div id="scrum-stories-list" class="scrum-list"><p class="placeholder">Loading…</p></div>
+            </section>
+            <section class="scrum-column">
+              <div class="scrum-column-head">Tasks</div>
+              <div id="scrum-tasks-list" class="scrum-list"><p class="placeholder">Loading…</p></div>
+            </section>
+          </div>
+          <aside class="s-group">
+            <div class="scrum-runner-panel">
+              <div class="scrum-runner-head">
+                <div>
+                  <h3 style="margin:0">Autonomous Mode</h3>
+                  <p class="muted sm" style="margin:6px 0 0">Safer runner for non-VSCARS projects. It needs an explicit target path and blocks self-work by default.</p>
+                </div>
+                <span id="scrum-runner-pill" class="scrum-runner-pill idle">Idle</span>
+              </div>
+              <div id="scrum-runner-summary" class="scrum-runner-summary">Loading autonomous status…</div>
+              <input type="text" id="scrum-runner-project-path" placeholder="/absolute/path/to/another/project" style="margin-bottom:8px">
+              <select id="scrum-runner-allow-tools" style="margin-bottom:8px">
+                <option value="read" selected>Read-only tools</option>
+                <option value="edit">Read + edit tools</option>
+                <option value="all">All tools</option>
+              </select>
+              <label class="scrum-runner-toggle">
+                <input type="checkbox" id="scrum-runner-allow-self-work">
+                <span>Allow work on VSCARS itself</span>
+              </label>
+              <div class="scrum-runner-actions">
+                <button id="scrum-runner-start-btn" onclick="startScrumRunner()" class="btn-sm btn-accent">Start</button>
+                <button id="scrum-runner-stop-btn" onclick="stopScrumRunner()" class="btn-sm btn-danger">Stop</button>
+              </div>
+              <div id="scrum-runner-current" class="scrum-runner-current muted sm"></div>
+            </div>
+            <h3>New Item</h3>
+            <select id="scrum-type-input" style="margin-bottom:8px">
+              <option value="story">Story</option>
+              <option value="task">Task</option>
+              <option value="bug">Bug</option>
+            </select>
+            <input type="text" id="scrum-title-input" placeholder="Title" style="margin-bottom:8px">
+            <textarea id="scrum-desc-input" rows="4" placeholder="Description" style="margin-bottom:8px"></textarea>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+              <select id="scrum-status-input">
+                <option value="backlog">Backlog</option>
+                <option value="todo" selected>Todo</option>
+                <option value="in_progress">In Progress</option>
+                <option value="review">Review</option>
+                <option value="done">Done</option>
+              </select>
+              <select id="scrum-priority-input">
+                <option value="low">Low</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+              </select>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+              <select id="scrum-parent-story-input">
+                <option value="">No parent story</option>
+              </select>
+              <input type="number" id="scrum-points-input" min="1" placeholder="Points">
+            </div>
+            <input type="text" id="scrum-tags-input" placeholder="tags, comma separated" style="margin-bottom:12px">
+            <button onclick="saveScrumItem()" class="btn-sm btn-accent" style="width:100%;padding:8px 0">Create Item</button>
+          </aside>
         </div>
       </div>
 

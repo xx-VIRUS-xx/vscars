@@ -427,13 +427,21 @@ Stops on non-quota errors (real failures).
 | `GET` | `/api/git/branches` |
 | `POST` | `/api/git/ai-commit-message` |
 
-### Idea Vault
+### Idea Vault (action-oriented)
+Workflows are for repeatable execution; the Idea Vault is for *evolving* thoughts toward action.
+
 | Method | Path |
 |--------|------|
 | `GET` | `/api/ideas` |
 | `POST` | `/api/ideas` |
 | `PATCH` | `/api/ideas/{id}` |
 | `DELETE` | `/api/ideas/{id}` |
+| `POST` | `/api/ideas/{id}/promote` (create `ScrumItem` from idea) |
+
+**Key fields:**
+- `stage`: `captured | clarifying | ready | promoted | shipped | archived`
+- `next_action`: one concrete next step (keeps ideas moving)
+- `promoted_scrum_item_id`: link to tracked work once promoted
 
 #### Idea Autopilot (concept)
 **Goal:** turn an `IdeaNote` into an **async, tracked execution flow** run by an agent (plan-first by default), with durable outputs and a clear next step.

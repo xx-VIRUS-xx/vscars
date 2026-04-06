@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
-from app.database import init_db, get_db, SessionLocal, User, UserPermission, AccessRequest, CommandLog, ConversationHistory, PasswordResetToken, IdeaNote, SavedWorkflow, UserSession, RegisteredMachine, TrustPolicy, ToolApproval, AgentTask, AgentSession, AgentSessionMessage
+from app.database import init_db, get_db, SessionLocal, User, UserPermission, AccessRequest, CommandLog, ConversationHistory, PasswordResetToken, IdeaNote, SavedWorkflow, UserSession, RegisteredMachine, TrustPolicy, ToolApproval, ScrumItem, AgentTask, AgentSession, AgentSessionMessage
 from app.git_ops import git_status, git_diff, git_stage, git_unstage, git_commit, git_push, git_log, git_branches, git_ai_commit_message
 import hashlib as _hashlib
 from app.schemas import (
@@ -20,10 +20,9 @@ from app.config import (
     ACCESS_TOKEN_EXPIRE_MINUTES, SUPERUSER_PHONE, STATIC_DIR,
     MAX_REQUEST_SIZE, RATE_LIMIT_LOGIN, RATE_LIMIT_API, APP_BASE_URL
 )
-from app.tools import execute_tool, TOOLS, _reset_allowed_roots
+from app.tools import execute_tool, TOOLS, _reset_allowed_roots, _get_workspace
 from app import relay as _relay
 from app.utils.qr_code import create_qr_auth_token
-from app.utils.ngrok_helper import NgrokManager
 from app.billing.routes import billing_router
 from app.email import send_welcome, send_password_reset
 from app.billing.plan_limits import apply_plan_to_permissions, enforce_plan_limits
@@ -41,9 +40,13 @@ import os
 import json
 import re
 import threading
+import time
 
 # Initialize database
 init_db()
+_SCRUM_RUNNERS = {}
+_SCRUM_RUNNER_LOCK = threading.Lock()
+_VSCARS_ROOT = os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -558,6 +561,268 @@ def _build_session_prompt(db: Session, session_id: int, user_prompt: str, max_ms
     lines.append("")
     lines.append(f"Current user request: {user_prompt}")
     return "\n".join(lines)
+
+
+def _get_scrum_runner_state(user_id: int) -> dict:
+    with _SCRUM_RUNNER_LOCK:
+        current = _SCRUM_RUNNERS.get(user_id)
+        if not current:
+            current = {
+                "running": False,
+                "stop_requested": False,
+                "current_agent_task_id": None,
+                "current_scrum_item_id": None,
+                "last_error": "",
+                "completed_count": 0,
+                "started_at": None,
+                "config": {
+                    "project_path": "",
+                    "allow_tools": "read",
+                    "allow_self_work": False,
+                },
+            }
+            _SCRUM_RUNNERS[user_id] = current
+        return dict(current)
+
+
+def _update_scrum_runner_state(user_id: int, **updates) -> dict:
+    with _SCRUM_RUNNER_LOCK:
+        current = _SCRUM_RUNNERS.get(user_id) or {
+            "running": False,
+            "stop_requested": False,
+            "current_agent_task_id": None,
+            "current_scrum_item_id": None,
+            "last_error": "",
+            "completed_count": 0,
+            "started_at": None,
+            "config": {
+                "project_path": "",
+                "allow_tools": "read",
+                "allow_self_work": False,
+            },
+        }
+        current.update(updates)
+        _SCRUM_RUNNERS[user_id] = current
+        return dict(current)
+
+
+def _normalize_runner_project_path(project_path: str) -> str:
+    raw = (project_path or "").strip()
+    if not raw:
+        return ""
+    resolved = os.path.realpath(os.path.expanduser(raw))
+    if not os.path.isdir(resolved):
+        raise ValueError(f"Directory not found: {resolved}")
+    return resolved
+
+
+def _validate_runner_target(project_path: str, allow_self_work: bool) -> str:
+    resolved = _normalize_runner_project_path(project_path)
+    if not resolved:
+        raise ValueError("Target project path is required for autonomous mode.")
+    if not allow_self_work and (resolved == _VSCARS_ROOT or resolved.startswith(_VSCARS_ROOT + os.sep)):
+        raise ValueError("Autonomous mode is blocked from working on VSCARS itself unless you enable self-work explicitly.")
+    return resolved
+
+
+def _pick_next_scrum_task(db: Session, user_id: int):
+    stories = db.query(ScrumItem).filter(
+        ScrumItem.user_id == user_id,
+        ScrumItem.item_type == "story",
+        ScrumItem.status == "in_progress",
+    ).all()
+    in_progress_story_ids = {s.id for s in stories}
+
+    tasks = db.query(ScrumItem).filter(
+        ScrumItem.user_id == user_id,
+        ScrumItem.item_type == "task",
+        ScrumItem.status.in_(["backlog", "todo"]),
+    ).all()
+    if not tasks:
+        return None
+
+    def sort_key(item: ScrumItem):
+        story_bias = 0 if item.parent_id in in_progress_story_ids else 1
+        priority_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}.get((item.priority or "medium").lower(), 2)
+        backlog_penalty = 1 if item.status == "backlog" else 0
+        return (story_bias, priority_rank, backlog_penalty, item.created_at or datetime.utcnow(), item.id)
+
+    tasks.sort(key=sort_key)
+    return tasks[0]
+
+
+def _build_scrum_runner_prompt(item: ScrumItem, parent_story, target_path: str) -> str:
+    lines = [
+        "You are the VSCARS autonomous scrum runner.",
+        f"Target project path: {target_path}",
+        f"Scrum task #{item.id}: {item.title}",
+    ]
+    if parent_story:
+        lines.append(f"Parent story: #{parent_story.id} - {parent_story.title}")
+        if parent_story.description:
+            lines.append(f"Story context: {parent_story.description}")
+    if item.description:
+        lines.append(f"Task details: {item.description}")
+    if item.tags:
+        lines.append(f"Tags: {item.tags}")
+    lines.extend([
+        "",
+        "Work only inside the target project path.",
+        "Do not touch the VSCARS app unless explicitly allowed.",
+        "Make the smallest complete change that satisfies the scrum task.",
+        "Return a concise summary of what changed and any follow-up risks.",
+    ])
+    return "\n".join(lines)
+
+
+def _ensure_scrum_runner_session(db: Session, user_id: int, project_path: str, allow_tools: str):
+    session = db.query(AgentSession).filter(
+        AgentSession.user_id == user_id,
+        AgentSession.name == "Scrum Runner",
+        AgentSession.is_active == True
+    ).order_by(AgentSession.updated_at.desc()).first()
+    if not session:
+        session = AgentSession(
+            user_id=user_id,
+            name="Scrum Runner",
+            agent="copilot",
+            model=None,
+            project_path=project_path,
+            allow_tools=allow_tools or "read",
+            is_active=True,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+        return session
+    session.project_path = project_path
+    session.allow_tools = allow_tools or session.allow_tools or "read"
+    session.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def _run_scrum_runner(user_id: int):
+    while True:
+        state = _get_scrum_runner_state(user_id)
+        if not state.get("running"):
+            return
+        if state.get("stop_requested"):
+            _update_scrum_runner_state(
+                user_id,
+                running=False,
+                stop_requested=False,
+                current_agent_task_id=None,
+                current_scrum_item_id=None,
+            )
+            return
+
+        db = SessionLocal()
+        try:
+            current_task_id = state.get("current_agent_task_id")
+            if current_task_id:
+                task = db.query(AgentTask).filter(
+                    AgentTask.id == current_task_id,
+                    AgentTask.user_id == user_id,
+                ).first()
+                if task and task.status in {"queued", "running"}:
+                    time.sleep(2)
+                    continue
+                if task and task.scrum_item_id:
+                    scrum_item = db.query(ScrumItem).filter(
+                        ScrumItem.id == task.scrum_item_id,
+                        ScrumItem.user_id == user_id,
+                    ).first()
+                    if scrum_item:
+                        scrum_item.status = "review" if task.status == "completed" else "todo"
+                        scrum_item.updated_at = datetime.utcnow()
+                        db.commit()
+                if task and task.status == "completed":
+                    _update_scrum_runner_state(
+                        user_id,
+                        current_agent_task_id=None,
+                        current_scrum_item_id=None,
+                        completed_count=int(state.get("completed_count") or 0) + 1,
+                    )
+                    time.sleep(1)
+                    continue
+                if task and task.status == "failed":
+                    _update_scrum_runner_state(
+                        user_id,
+                        current_agent_task_id=None,
+                        current_scrum_item_id=None,
+                        last_error=(task.error or "Autonomous scrum task failed")[:500],
+                    )
+                    time.sleep(1)
+                    continue
+
+            config = state.get("config") or {}
+            target_path = _validate_runner_target(config.get("project_path", ""), bool(config.get("allow_self_work")))
+            next_item = _pick_next_scrum_task(db, user_id)
+            if not next_item:
+                _update_scrum_runner_state(
+                    user_id,
+                    running=False,
+                    current_agent_task_id=None,
+                    current_scrum_item_id=None,
+                )
+                return
+
+            parent_story = None
+            if next_item.parent_id:
+                parent_story = db.query(ScrumItem).filter(
+                    ScrumItem.id == next_item.parent_id,
+                    ScrumItem.user_id == user_id,
+                ).first()
+
+            session = _ensure_scrum_runner_session(db, user_id, target_path, str(config.get("allow_tools") or "read"))
+            prompt = _build_scrum_runner_prompt(next_item, parent_story, target_path)
+            db.add(AgentSessionMessage(session_id=session.id, role="user", content=prompt[:8000]))
+            next_item.status = "in_progress"
+            next_item.updated_at = datetime.utcnow()
+            session.updated_at = datetime.utcnow()
+            db.commit()
+
+            task = AgentTask(
+                user_id=user_id,
+                tool_name="ask_agent",
+                input_params=json.dumps({
+                    "prompt": prompt,
+                    "agent": session.agent or "copilot",
+                    "project_path": target_path,
+                    "model": session.model or "",
+                    "allow_tools": session.allow_tools or "read",
+                }),
+                status="queued",
+                created_at=datetime.utcnow(),
+                agent_session_id=session.id,
+                scrum_item_id=next_item.id,
+            )
+            db.add(task)
+            db.commit()
+            db.refresh(task)
+            threading.Thread(target=_run_agent_task, args=(task.id,), daemon=True).start()
+            _update_scrum_runner_state(
+                user_id,
+                current_agent_task_id=task.id,
+                current_scrum_item_id=next_item.id,
+                last_error="",
+            )
+        except Exception as exc:
+            _update_scrum_runner_state(
+                user_id,
+                running=False,
+                current_agent_task_id=None,
+                current_scrum_item_id=None,
+                last_error=str(exc)[:500],
+            )
+            return
+        finally:
+            db.close()
+        time.sleep(1)
 
 
 def _run_agent_task(task_id: int):
@@ -1864,27 +2129,12 @@ async def report_bug(
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
-    ngrok_url = NgrokManager.get_public_url()
-    
     return {
         "status": "ok",
         "app": "VS Code Copilot Mobile Controller",
         "version": "1.0.0",
-        "ngrok_enabled": NgrokManager.is_active(),
-        "public_url": ngrok_url
+        "public_url": ""
     }
-
-@app.get("/api/ngrok/url")
-async def get_ngrok_url(current_user: User = Depends(get_superuser)):
-    """Get ngrok public URL (superuser only)"""
-    url = NgrokManager.get_public_url()
-    if not url:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Ngrok tunnel not active"
-        )
-    
-    return {"public_url": url}
 
 # ==================== WEBSOCKET STREAMING ====================
 
@@ -2512,6 +2762,226 @@ async def get_copilot_models(current_user: User = Depends(get_current_user)):
     return {"plan": plan, "models": models, "default": models[0]["id"]}
 
 
+# ==================== SCRUM DASHBOARD ROUTES ====================
+
+@app.get("/api/scrum/items")
+async def list_scrum_items(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    items = db.query(ScrumItem).filter(
+        ScrumItem.user_id == current_user.id
+    ).order_by(ScrumItem.updated_at.desc(), ScrumItem.created_at.desc()).all()
+    return {
+        "items": [
+            {
+                "id": item.id,
+                "item_type": item.item_type,
+                "title": item.title,
+                "description": item.description,
+                "status": item.status,
+                "priority": item.priority,
+                "parent_id": item.parent_id,
+                "story_points": item.story_points,
+                "tags": item.tags,
+                "created_at": item.created_at.isoformat() if item.created_at else None,
+                "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+            }
+            for item in items
+        ]
+    }
+
+
+@app.post("/api/scrum/items")
+async def create_scrum_item(data: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    data = data or {}
+    item_type = str(data.get("item_type", "task") or "task").strip().lower()
+    if item_type not in {"bug", "story", "task"}:
+        raise HTTPException(status_code=400, detail="item_type must be bug, story, or task")
+
+    title = str(data.get("title", "") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+
+    status_value = str(data.get("status", "todo") or "todo").strip().lower()
+    if status_value not in {"backlog", "todo", "in_progress", "review", "done"}:
+        status_value = "todo"
+
+    priority = str(data.get("priority", "medium") or "medium").strip().lower()
+    if priority not in {"low", "medium", "high", "critical"}:
+        priority = "medium"
+
+    parent_id = data.get("parent_id")
+    if parent_id in {"", None}:
+        parent_id = None
+    else:
+        parent_id = int(parent_id)
+
+    story_points = data.get("story_points")
+    if story_points in {"", None}:
+        story_points = None
+    else:
+        story_points = int(story_points)
+
+    item = ScrumItem(
+        user_id=current_user.id,
+        item_type=item_type,
+        title=title,
+        description=str(data.get("description", "") or "").strip() or None,
+        status=status_value,
+        priority=priority,
+        parent_id=parent_id,
+        story_points=story_points,
+        tags=str(data.get("tags", "") or "").strip() or None,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return {
+        "id": item.id,
+        "item_type": item.item_type,
+        "title": item.title,
+        "description": item.description,
+        "status": item.status,
+        "priority": item.priority,
+        "parent_id": item.parent_id,
+        "story_points": item.story_points,
+        "tags": item.tags,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+
+@app.patch("/api/scrum/items/{item_id}")
+async def update_scrum_item(item_id: int, data: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    item = db.query(ScrumItem).filter(
+        ScrumItem.id == item_id,
+        ScrumItem.user_id == current_user.id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Scrum item not found")
+
+    data = data or {}
+    if "status" in data:
+        status_value = str(data.get("status", item.status) or item.status).strip().lower()
+        if status_value not in {"backlog", "todo", "in_progress", "review", "done"}:
+            raise HTTPException(status_code=400, detail="Invalid status")
+        item.status = status_value
+    if "title" in data:
+        title = str(data.get("title", "") or "").strip()
+        if title:
+            item.title = title
+    if "description" in data:
+        item.description = str(data.get("description", "") or "").strip() or None
+    if "priority" in data:
+        priority = str(data.get("priority", item.priority) or item.priority).strip().lower()
+        if priority in {"low", "medium", "high", "critical"}:
+            item.priority = priority
+    if "tags" in data:
+        item.tags = str(data.get("tags", "") or "").strip() or None
+    item.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(item)
+    return {
+        "id": item.id,
+        "item_type": item.item_type,
+        "title": item.title,
+        "description": item.description,
+        "status": item.status,
+        "priority": item.priority,
+        "parent_id": item.parent_id,
+        "story_points": item.story_points,
+        "tags": item.tags,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+
+@app.delete("/api/scrum/items/{item_id}")
+async def delete_scrum_item(item_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    item = db.query(ScrumItem).filter(
+        ScrumItem.id == item_id,
+        ScrumItem.user_id == current_user.id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Scrum item not found")
+    db.delete(item)
+    db.commit()
+    return {"success": True}
+
+
+@app.get("/api/scrum/runner")
+async def get_scrum_runner_status(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    state = _get_scrum_runner_state(current_user.id)
+    pending_count = db.query(ScrumItem).filter(
+        ScrumItem.user_id == current_user.id,
+        ScrumItem.item_type == "task",
+        ScrumItem.status.in_(["backlog", "todo"]),
+    ).count()
+    current_item = None
+    current_task = None
+    if state.get("current_scrum_item_id"):
+        item = db.query(ScrumItem).filter(
+            ScrumItem.id == state["current_scrum_item_id"],
+            ScrumItem.user_id == current_user.id,
+        ).first()
+        if item:
+            current_item = {"id": item.id, "title": item.title, "status": item.status}
+    if state.get("current_agent_task_id"):
+        task = db.query(AgentTask).filter(
+            AgentTask.id == state["current_agent_task_id"],
+            AgentTask.user_id == current_user.id,
+        ).first()
+        if task:
+            current_task = {"id": task.id, "status": task.status, "scrum_item_id": task.scrum_item_id}
+    return {
+        "runner": state,
+        "pending_task_count": pending_count,
+        "current_item": current_item,
+        "current_agent_task": current_task,
+    }
+
+
+@app.post("/api/scrum/runner/start")
+async def start_scrum_runner(data: dict = None, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ensure_copilot_permission(current_user, db)
+    payload = data or {}
+    state = _get_scrum_runner_state(current_user.id)
+    if state.get("running"):
+        return {"success": True, "message": "Autonomous mode is already running.", "runner": state}
+
+    target_path = _validate_runner_target(
+        str(payload.get("project_path", "") or ""),
+        bool(payload.get("allow_self_work", False)),
+    )
+    config = {
+        "project_path": target_path,
+        "allow_tools": str(payload.get("allow_tools", "read") or "read").strip() or "read",
+        "allow_self_work": bool(payload.get("allow_self_work", False)),
+    }
+    new_state = _update_scrum_runner_state(
+        current_user.id,
+        running=True,
+        stop_requested=False,
+        current_agent_task_id=None,
+        current_scrum_item_id=None,
+        last_error="",
+        completed_count=0,
+        started_at=datetime.utcnow().isoformat(),
+        config=config,
+    )
+    threading.Thread(target=_run_scrum_runner, args=(current_user.id,), daemon=True).start()
+    return {"success": True, "message": "Autonomous mode started.", "runner": new_state}
+
+
+@app.post("/api/scrum/runner/stop")
+async def stop_scrum_runner(current_user: User = Depends(get_current_user)):
+    state = _get_scrum_runner_state(current_user.id)
+    if not state.get("running"):
+        return {"success": True, "message": "Autonomous mode is already stopped.", "runner": state}
+    new_state = _update_scrum_runner_state(current_user.id, stop_requested=True)
+    return {"success": True, "message": "Autonomous stop requested.", "runner": new_state}
+
+
 # ==================== SERVE FRONTEND (must be LAST — catch-all) ====================
 
 @app.get("/", include_in_schema=False)
@@ -2548,9 +3018,4 @@ async def catch_all(full_path: str):
 if __name__ == "__main__":
     import uvicorn
     from app.config import HOST, PORT
-    
-    # Start ngrok if enabled
-    if True:  # Change to check env var
-        NgrokManager.start_tunnel(PORT)
-    
     uvicorn.run(app, host=HOST, port=PORT)
