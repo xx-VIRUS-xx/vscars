@@ -434,14 +434,78 @@ Success criteria:
 
 ### Candidate 3
 Status: `New`
-Name:
+Name: Idea Autopilot
+
 Problem:
+- Ideas currently stop at note-taking and do not lead into action.
+- Users can run agents, but that work isn’t automatically anchored to a specific idea with a durable trail.
+
 Why it matters:
+- Makes the Idea Vault **action-oriented**: ideas can graduate into tracked work, not just notes.
+- Creates a repeatable “idea → plan → next step → shipped” loop.
+- Connects async agent execution to backlog tracking so outcomes are reviewable and resumable.
+
 Target user:
-High-level behavior:
+- Solo builders collecting and shipping many ideas
+
+Definition (working):
+- **Idea Autopilot** = turning an Idea Vault entry into an **async, tracked execution flow** run by an agent.
+- “Tracked” means the app can show: status, timestamps, outputs/errors, tool usage, and the *next step*.
+
+Core principle:
+- Default to **Plan-only**. Execution is always explicit and subject to trust/approval policy.
+
+Lifecycle (state machine):
+- `idea.pending` → `autopilot.queued` → `autopilot.running` → `autopilot.completed` | `autopilot.failed` | `autopilot.canceled`
+- A completed run must yield **actionable outputs** (tasks/checklist), not just prose.
+
+High-level behavior (MVP):
+- User captures an idea in the Idea Vault (title/body/tags).
+- User clicks **Autopilot** and chooses a run configuration:
+  - agent profile (copilot / claude / codex label)
+  - project_path context (what codebase this applies to)
+  - allow_tools level (`read` / `edit` / `all`)
+  - mode: **Plan-only** (default) vs **Execute first step**
+  - budget guardrails: max runtime/steps (system-enforced)
+- System queues an async agent task and provides a tracker view.
+- Autopilot produces at least one concrete next step:
+  - a short plan/checklist, and/or
+  - a created Scrum story/task list for follow-through.
+- User can **continue** the flow later (same session) without re-explaining context.
+
+Artifacts (what Autopilot should create/attach):
+- `Run Summary`: what it tried, what it learned, what it changed (if any)
+- `Next Actions`: checklist / backlog items with clear “definition of done”
+- `Evidence`: links to command logs, file diffs, errors
+
+How this maps to current primitives (avoid new infra):
+- Idea storage: `IdeaNote` + `/api/ideas`
+- Async tracking: `AgentTask` (+ polling/notifications)
+- Durable context: `AgentSession` + messages (supports “continue session”)
+- Backlog tracking: `ScrumItem` so Autopilot output becomes reviewable work
+
+Guardrails / Trust & Safety (must apply):
+- Trust policy evaluation for agent runs (especially anything with `allow_tools=edit/all`)
+- Approval queue for sensitive actions
+- Plan limits + per-user budgets to prevent runaway usage
+
 Dependencies:
+- Idea Vault (Idea CRUD)
+- Async agent tasks + sessions
+- Trust/approval gating + plan limits
+- Backlog primitive (Scrum items) or equivalent task list
+
 Risks:
+- Unclear UX if users can’t tell what ran and why
+- Unsafe execution if trust/approval isn’t enforced
+- Cost/runaway usage if ideas can auto-run without explicit intent
+- “Pretty plans” that don’t translate into next actions
+
 Success criteria:
+- User can convert an idea into a tracked execution flow in one action
+- The run is visible in-app (queued → running → completed/failed) with durable output
+- Output yields at least one actionable next step (task/checklist), not just prose
+- Users can resume/continue a prior run with preserved context
 
 ---
 

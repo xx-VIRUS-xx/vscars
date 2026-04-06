@@ -1,6 +1,6 @@
 # VSCARS — Full Project Documentation
 
-**Last updated:** 2026-04-01
+**Last updated:** 2026-04-06
 **Stack:** Python 3.12 · FastAPI · SQLite · SQLAlchemy · Vanilla JS · HTML/CSS
 **Domain:** vscars.latenightstack.com
 
@@ -434,6 +434,25 @@ Stops on non-quota errors (real failures).
 | `POST` | `/api/ideas` |
 | `PATCH` | `/api/ideas/{id}` |
 | `DELETE` | `/api/ideas/{id}` |
+
+#### Idea Autopilot (concept)
+**Goal:** turn an `IdeaNote` into an **async, tracked execution flow** run by an agent (plan-first by default), with durable outputs and a clear next step.
+
+**Maps to existing primitives:**
+- Idea: `IdeaNote` (`/api/ideas`)
+- Run tracking: `AgentTask` (queued/running/completed/failed) + command logs
+- Durable context: `AgentSession` + messages (resume/continue)
+- Optional backlog: `ScrumItem` created from autopilot output so work becomes reviewable
+
+**Safety defaults / guardrails:**
+- Default mode is **Plan-only**; execution requires explicit choice.
+- `allow_tools` is enforced (`read`/`edit`/`all`) and must pass trust/approval gating.
+- Budget limits (time/steps) and plan limits apply to autopilot runs.
+
+**Expected outputs (Definition of Done):**
+- Run summary (what it did / learned)
+- Next actions checklist (or Scrum items) with clear acceptance criteria
+- Evidence links (logs, diffs, errors) so the run is auditable
 
 ### Saved Workflows
 | Method | Path |
