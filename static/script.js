@@ -763,6 +763,8 @@ function showMainView() {
     if (shouldShowOnboarding()) {
         setTimeout(showOnboarding, 600);
     }
+    // Scrum is the primary operating dashboard in simplified mode.
+    switchView('scrum');
 }
 
 function switchView(viewName) {
@@ -1352,14 +1354,16 @@ ${crawlerUrl ? `<div style="margin-top:10px"><button onclick="openTaskTracker(${
         }
 
         if (error.status === 403) {
-            // Plan restriction
-            const msg = error.message || 'Your plan does not allow this feature.';
             document.getElementById('result-output').innerHTML = `
-<div style="text-align:center;padding:16px 8px">
-  <div style="font-size:28px;margin-bottom:10px">🔒</div>
-  <div style="font-size:14px;font-weight:600;color:var(--t1);margin-bottom:6px">Feature not available</div>
-  <div style="font-size:12px;color:var(--t2);margin-bottom:14px">${msg}</div>
-  <button onclick="switchView('billing')" style="background:var(--a);color:#000;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer">Upgrade Plan</button>
+<div style="text-align:center;padding:20px 12px">
+  <div style="font-size:32px;margin-bottom:10px">🖥️</div>
+  <div style="font-size:15px;font-weight:600;color:var(--t1);margin-bottom:8px">This tool needs your machine connected</div>
+  <div style="font-size:13px;color:var(--t2);margin-bottom:6px;line-height:1.5">File access, terminal, and git tools run on <strong>your own machine</strong> via the VSCARS CLI — not on our servers.</div>
+  <div style="font-size:12px;color:var(--muted);margin-bottom:18px">AI Chat works right now without any setup. ✨</div>
+  <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+    <button onclick="switchView('settings')" style="background:var(--a);color:#000;border:none;border-radius:8px;padding:9px 20px;font-size:13px;font-weight:600;cursor:pointer">Connect My Machine →</button>
+    <button onclick="closeModal()" style="background:var(--surface2);color:var(--t2);border:none;border-radius:8px;padding:9px 20px;font-size:13px;cursor:pointer">Try AI Chat Instead</button>
+  </div>
 </div>`;
             document.getElementById('tool-result').style.display = 'block';
             hideLoading();
@@ -1439,7 +1443,7 @@ async function loadMachinesView() {
     } catch (e) {
         const isFree = e.status === 403;
         container.innerHTML = isFree
-            ? `<div style="text-align:center;padding:16px"><div style="font-size:28px">🔒</div><div style="font-size:13px;color:var(--t2);margin-top:8px">Machine registration requires a Pro plan.</div><br><button onclick="switchView('billing')" style="background:var(--a);color:#000;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer">Upgrade</button></div>`
+            ? `<div style="text-align:center;padding:20px 12px"><div style="font-size:32px">🖥️</div><div style="font-size:14px;font-weight:600;color:var(--t1);margin-top:10px;margin-bottom:6px">Connect your machine</div><div style="font-size:12px;color:var(--t2);margin-bottom:4px">Install the VSCARS CLI on your dev machine to unlock file access, terminal, and git tools.</div><div style="font-size:11px;color:var(--muted);margin-bottom:16px">During beta, machine access is invite-only. <a href="mailto:pm10182000@gmail.com" style="color:var(--a)">Request access →</a></div></div>`
             : `<p style="color:var(--t2);font-size:13px">Failed to load machines.</p>`;
     }
 }
@@ -2041,17 +2045,15 @@ async function loadApiKeySection() {
     if (!section) return;
     try {
         const data = await fetchAPI('/api/auth/api-key');
-        if (!data.can_use_machine) {
-            // Free plan — hide section
-            section.style.display = 'none';
-            return;
-        }
+        // All registered users can use the CLI — always show
         section.style.display = 'block';
         document.getElementById('api-key-btn').textContent = data.has_key ? 'Regenerate API Key' : 'Generate API Key';
         document.getElementById('api-key-has-key').style.display = data.has_key ? 'block' : 'none';
         document.getElementById('api-key-no-key').style.display = data.has_key ? 'none' : 'block';
     } catch (e) {
-        section.style.display = 'none';
+        // Still show the section — user can retry
+        section.style.display = 'block';
+        document.getElementById('api-key-no-key').style.display = 'block';
     }
 }
 
@@ -2365,10 +2367,10 @@ const PLAN_COLORS = {
 };
 
 const PLAN_FEATURES = {
-    free:        ['AI Chat only', '50 API calls / day', 'No machine/file/terminal access'],
-    pro:         ['Full control on your own machine', '1000 API calls / day', 'Files + terminal + git + AI'],
-    team:        ['Unlimited API calls', 'Multi-user + multi-machine', 'Shared workspace'],
-    self_hosted: ['Run your own relay server', 'Unlimited everything', 'Monthly or lifetime license'],
+    free:        ['5 AI requests/day (your own API key)', 'Full terminal access on your machine', 'Files, git, workflows — unlimited', 'Connect your machine via vscars CLI'],
+    pro:         ['1000 AI requests/day', 'Everything in Beta', 'Priority support'],
+    team:        ['Unlimited AI requests', 'Multi-user + multi-machine', 'Shared workspace + audit log'],
+    self_hosted: ['Self-hosted relay', 'Unlimited everything', 'One-time or monthly license'],
 };
 
 async function loadBillingStatus() {
@@ -2424,49 +2426,28 @@ function _renderPricingCards(containerId, currentPlan, compact = false) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
-    const plans = [
-        { key: 'free',        label: 'Free',        price: '$0',   sub: 'forever',     checkout: null },
-        { key: 'pro',         label: 'Pro',         price: '$9',   sub: '/month',      checkout: 'pro' },
-        { key: 'team',        label: 'Team',        price: '$29',  sub: '/month',      checkout: 'team' },
-        { key: 'self_hosted', label: 'Self-Hosted', price: '$19',  sub: '/mo or $49 once', checkout: 'self_hosted_monthly' },
-    ];
-
-    container.innerHTML = plans.map(p => {
-        const isCurrent = p.key === currentPlan;
-        const features = PLAN_FEATURES[p.key] || [];
-        const btnHtml = isCurrent
-            ? `<button class="btn-plan-current" disabled>Current Plan</button>`
-            : (p.checkout
-                ? `<button class="btn-plan-upgrade" onclick="startCheckout('${p.checkout}')" style="background:${PLAN_COLORS[p.key]}">Upgrade</button>`
-                : `<button class="btn-plan-current" disabled>Free</button>`);
-
-        const lifetimeBadge = p.key === 'self_hosted'
-            ? `<div class="plan-also">or <strong>$49</strong> one-time lifetime</div>` : '';
-
-        return `
-        <div class="plan-card ${isCurrent ? 'plan-card-active' : ''}" style="--plan-color:${PLAN_COLORS[p.key]}">
-            <div class="plan-header">
-                <span class="plan-name">${p.label}</span>
-                <span class="plan-price">${p.price}<span class="plan-sub">${p.sub}</span></span>
-            </div>
-            ${lifetimeBadge}
-            <ul class="plan-features">
-                ${features.map(f => `<li>${f}</li>`).join('')}
-            </ul>
-            ${btnHtml}
-        </div>`;
-    }).join('');
-
-    // For self-hosted, also show lifetime button
-    const shCard = container.querySelector('.plan-card:last-child');
-    if (shCard && currentPlan !== 'self_hosted') {
-        const upgradeBtn = shCard.querySelector('.btn-plan-upgrade');
-        if (upgradeBtn) {
-            upgradeBtn.insertAdjacentHTML('afterend',
-                `<button class="btn-plan-secondary" onclick="startCheckout('self_hosted_lifetime')" style="border-color:${PLAN_COLORS.self_hosted};color:${PLAN_COLORS.self_hosted}">Buy Lifetime ($49)</button>`
-            );
-        }
-    }
+    const betaFeatures = PLAN_FEATURES['free'];
+    container.innerHTML = `
+    <div class="plan-card plan-card-active" style="--plan-color:#818cf8;max-width:420px">
+        <div class="plan-header">
+            <span class="plan-name">Beta</span>
+            <span class="plan-price">$0<span class="plan-sub"> / free during beta</span></span>
+        </div>
+        <ul class="plan-features">
+            ${betaFeatures.map(f => `<li>${f}</li>`).join('')}
+        </ul>
+        <button class="btn-plan-current" disabled>Current Plan</button>
+    </div>
+    <div class="plan-card" style="--plan-color:#444;opacity:0.55;max-width:420px">
+        <div class="plan-header">
+            <span class="plan-name">Pro — Coming Soon</span>
+            <span class="plan-price">$9<span class="plan-sub">/month</span></span>
+        </div>
+        <ul class="plan-features">
+            ${(PLAN_FEATURES['pro'] || []).map(f => `<li>${f}</li>`).join('')}
+        </ul>
+        <button class="btn-plan-current" disabled>Coming Soon</button>
+    </div>`;
 }
 
 async function startCheckout(planKey) {

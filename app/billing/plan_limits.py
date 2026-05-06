@@ -5,20 +5,19 @@ from sqlalchemy.orm import Session
 # ─── Plan definitions ──────────────────────────────────────────────────────────
 
 PLAN_LIMITS = {
-    # Free: AI chat only. NO filesystem, terminal, or git access.
-    # Tools run on the user's own machine via the vscars CLI agent (pro+).
-    # Free users never touch the server host's filesystem.
+    # Beta: install CLI on your own machine, 5 AI requests/day.
+    # Server is relay only — never touches host filesystem.
     "free": {
-        "daily_api_calls": 50,
-        "can_run_copilot": True,   # AI chat (server-side API calls only)
-        "can_run_commands": False,  # no terminal
-        "can_edit_files": False,    # no file writes
-        "can_view_files": False,    # no file reads (no FS access at all)
-        "can_use_machine": False,   # no registered machine
-        "label": "Free",
+        "daily_api_calls": 5,
+        "can_run_copilot": True,
+        "can_run_commands": True,   # runs on USER's machine via CLI
+        "can_edit_files": True,     # runs on USER's machine via CLI
+        "can_view_files": True,     # runs on USER's machine via CLI
+        "can_use_machine": True,    # every beta user can register their own machine
+        "label": "Beta",
         "price_monthly": 0,
         "price_lifetime": None,
-        "description": "AI Chat only — no machine access",
+        "description": "Beta — connect your machine, 5 AI requests/day",
     },
     # Pro: full VSCARS on the user's OWN registered machine via vscars CLI
     "pro": {
@@ -133,8 +132,8 @@ def enforce_plan_limits(user, db: Session) -> None:
             status_code=429,
             detail={
                 "message": (
-                    f"Daily limit of {daily_limit} API calls reached for the "
-                    f"{limits['label']} plan. Upgrade to unlock more."
+                    f"You've used all {daily_limit} beta requests for today. "
+                    f"Resets at midnight UTC. More access coming soon — thanks for trying VSCARS!"
                 ),
                 "plan": user.plan,
                 "daily_limit": daily_limit,

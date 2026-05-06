@@ -1,159 +1,132 @@
-#!/bin/bash
-# DevPilot Deployment Script
-# Usage: ./deploy.sh [local|server]
+#!/usr/bin/env bash
+# VSCARS deployment script — EC2 Ubuntu + Cloudflare Tunnel
+# No nginx needed. Tunnel handles SSL + routing directly to uvicorn.
 #
-# local  - Setup on macOS with Homebrew nginx (default)
-# server - Setup on Linux with systemd + nginx
+# Run as: sudo bash deploy.sh
+#
+# Prerequisites (do these ONCE before running this script):
+#   1. Create a Cloudflare Tunnel in the dashboard (Zero Trust → Networks → Tunnels)
+#   2. Copy the tunnel token — you'll need it for the cloudflared service
+#   3. Point vscars.latenightstack.com → this tunnel in the Cloudflare DNS panel
 
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-DEPLOY_DIR="$PROJECT_DIR/deploy"
-MODE="${1:-local}"
-
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
-
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
 log()  { echo -e "${GREEN}[+]${NC} $1"; }
+info() { echo -e "${CYAN}[·]${NC} $1"; }
 warn() { echo -e "${YELLOW}[!]${NC} $1"; }
-err()  { echo -e "${RED}[x]${NC} $1"; exit 1; }
+fail() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
 
-# ---------- Common Setup ----------
-setup_python() {
-    log "Installing Python dependencies..."
-    cd "$PROJECT_DIR"
-    python3 -m pip install -r requirements.txt -q
-    python3 -m pip install slowapi -q
-    log "Python deps installed."
-}
+[[ "$EUID" -eq 0 ]] || fail "Run as root: sudo bash deploy.sh"
+[[ "$(uname)" == "Linux" ]] || fail "This script targets Linux (Ubuntu)."
 
-check_prod_env_safety() {
-    # Prevent accidentally deploying local/dev .env into production.
-    if [[ "$MODE" == "server" && -f "$PROJECT_DIR/.env" ]]; then
-        err "Refusing server deploy: '$PROJECT_DIR/.env' exists. Remove it and use system-level env vars (EnvironmentFile) instead."
-    fi
-}
+DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$DEPLOY_DIR/.." && pwd)"
+APP_DIR="/opt/vscars"
+APP_USER="ubuntu"
+ENV_FILE="/etc/vscars/vscars.env"
+DB_DIR="/var/lib/vscars"
 
-check_app_starts() {
-    log "Testing app startup..."
-    cd "$PROJECT_DIR"
-    timeout 5 python3 -c "from app.main import app; print('App imports OK')" || err "App failed to import. Fix errors first."
-    log "App import check passed."
-}
-
-# ---------- macOS Local (Homebrew) ----------
-deploy_local() {
-    log "Deploying locally on macOS with Homebrew nginx..."
-
-    # Check nginx
-    if ! command -v nginx &>/dev/null; then
-        warn "nginx not found. Installing via Homebrew..."
-        brew install nginx
-    fi
-
-    NGINX_DIR="$(brew --prefix)/etc/nginx"
-    SERVERS_DIR="$NGINX_DIR/servers"
-    mkdir -p "$SERVERS_DIR"
-
-    # Adjust paths in config for spaces
-    log "Copying nginx config..."
-    cp "$DEPLOY_DIR/nginx.conf" "$SERVERS_DIR/devpilot.conf"
-
-    # Test nginx config
-    if nginx -t 2>&1; then
-        log "nginx config valid."
-    else
-        err "nginx config test failed!"
-    fi
-
-    # Restart nginx
-    brew services restart nginx
-    log "nginx restarted."
-
-    # Start the app in background
-    log "Starting DevPilot server..."
-    cd "$PROJECT_DIR"
-    pkill -f "python3 -u main.py" 2>/dev/null || true
-    sleep 1
-    nohup python3 -u main.py > /tmp/devpilot.log 2>&1 &
-    APP_PID=$!
-    sleep 3
-
-    if curl -s http://localhost:8000/api/health | grep -q '"ok"'; then
-        log "Server running (PID: $APP_PID)"
-        log "Access at: http://localhost (nginx) or http://localhost:8000 (direct)"
-    else
-        err "Server failed to start. Check /tmp/devpilot.log"
-    fi
-}
-
-# ---------- Linux Server (systemd) ----------
-deploy_server() {
-    log "Deploying on Linux server with systemd + nginx..."
-
-    # Check we're on Linux
-    [[ "$(uname)" == "Linux" ]] || err "Server mode requires Linux. Use './deploy.sh local' for macOS."
-
-    # Check root
-    [[ "$EUID" -eq 0 ]] || err "Server deploy requires root. Run: sudo ./deploy.sh server"
-
-    # Install nginx if needed
-    if ! command -v nginx &>/dev/null; then
-        warn "Installing nginx..."
-        apt-get update -qq && apt-get install -y -qq nginx certbot python3-certbot-nginx
-    fi
-
-    # Copy configs
-    log "Installing nginx site config..."
-    cp "$DEPLOY_DIR/nginx.conf" /etc/nginx/sites-available/devpilot
-    ln -sf /etc/nginx/sites-available/devpilot /etc/nginx/sites-enabled/devpilot
-
-    # Remove default site if present
-    rm -f /etc/nginx/sites-enabled/default
-
-    # Test + reload nginx
-    nginx -t || err "nginx config test failed!"
-    systemctl reload nginx
-    log "nginx configured and reloaded."
-
-    # Install systemd service
-    log "Installing systemd service..."
-    cp "$DEPLOY_DIR/devpilot.service" /etc/systemd/system/
-    systemctl daemon-reload
-    systemctl enable devpilot
-    systemctl restart devpilot
-
-    sleep 3
-    if systemctl is-active --quiet devpilot; then
-        log "DevPilot service is running."
-    else
-        err "Service failed to start. Check: journalctl -u devpilot -n 50"
-    fi
-
-    log "Deployment complete!"
-    echo ""
-    echo "  Access:  http://$(hostname -I | awk '{print $1}')"
-    echo "  Status:  sudo systemctl status devpilot"
-    echo "  Logs:    journalctl -u devpilot -f"
-    echo ""
-    warn "For HTTPS: sudo certbot --nginx -d yourdomain.com"
-}
-
-# ---------- Main ----------
 echo ""
-echo "=========================================="
-echo "  DevPilot Deployment"
-echo "=========================================="
+echo -e "${CYAN}  VSCARS — Cloudflare Tunnel Deploy${NC}"
 echo ""
 
-setup_python
-check_prod_env_safety
-check_app_starts
+# ── 1. System packages ────────────────────────────────────────────────────────
+log "Installing system packages..."
+apt-get update -qq
+apt-get install -y -qq python3 python3-pip python3-venv curl
 
-case "$MODE" in
-    local)  deploy_local ;;
-    server) deploy_server ;;
-    *)      err "Usage: ./deploy.sh [local|server]" ;;
-esac
+# ── 2. cloudflared ────────────────────────────────────────────────────────────
+if ! command -v cloudflared &>/dev/null; then
+    log "Installing cloudflared..."
+    curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+        | gpg --dearmor > /usr/share/keyrings/cloudflare-main.gpg
+    echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" \
+        > /etc/apt/sources.list.d/cloudflared.list
+    apt-get update -qq
+    apt-get install -y -qq cloudflared
+    log "cloudflared installed: $(cloudflared --version)"
+else
+    info "cloudflared already installed: $(cloudflared --version)"
+fi
+
+# ── 3. App directory ──────────────────────────────────────────────────────────
+log "Syncing app to $APP_DIR..."
+if [[ "$PROJECT_DIR" != "$APP_DIR" ]]; then
+    rsync -a \
+        --exclude='.venv' --exclude='__pycache__' --exclude='*.pyc' \
+        --exclude='.env' --exclude='*.db' --exclude='.git' \
+        "$PROJECT_DIR/" "$APP_DIR/"
+fi
+chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+
+# ── 4. Database directory ─────────────────────────────────────────────────────
+log "Setting up database directory..."
+mkdir -p "$DB_DIR"
+chown "$APP_USER:$APP_USER" "$DB_DIR"
+
+# ── 5. Python venv ────────────────────────────────────────────────────────────
+log "Creating Python venv..."
+sudo -u "$APP_USER" python3 -m venv "$APP_DIR/.venv"
+log "Installing Python dependencies..."
+sudo -u "$APP_USER" "$APP_DIR/.venv/bin/pip" install --quiet --upgrade pip
+sudo -u "$APP_USER" "$APP_DIR/.venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
+
+# ── 6. Env file ───────────────────────────────────────────────────────────────
+if [[ ! -f "$ENV_FILE" ]]; then
+    log "Creating env file at $ENV_FILE..."
+    mkdir -p /etc/vscars
+    cp "$DEPLOY_DIR/vscars.env.example" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    chown root:root "$ENV_FILE"
+    warn "→ Edit $ENV_FILE: set SECRET_KEY and APP_BASE_URL"
+    warn "→ Then: sudo systemctl restart vscars"
+else
+    info "Env file exists at $ENV_FILE — not overwriting"
+fi
+
+# ── 7. Verify app imports ─────────────────────────────────────────────────────
+log "Verifying app imports..."
+cd "$APP_DIR"
+sudo -u "$APP_USER" \
+    env $(cat "$ENV_FILE" | grep -v '^#' | xargs) \
+    "$APP_DIR/.venv/bin/python" -c "from app.main import app; print('  ✅ App imports OK')" \
+    2>/dev/null || warn "App import check skipped (env not fully configured yet)"
+
+# ── 8. VSCARS systemd service ─────────────────────────────────────────────────
+log "Installing vscars systemd service..."
+cp "$DEPLOY_DIR/vscars.service" /etc/systemd/system/vscars.service
+systemctl daemon-reload
+systemctl enable vscars
+systemctl restart vscars
+sleep 3
+if systemctl is-active --quiet vscars; then
+    log "vscars service running"
+else
+    warn "vscars service not running yet — check after configuring env"
+    warn "journalctl -u vscars -n 50"
+fi
+
+# ── 9. Cloudflare Tunnel service ──────────────────────────────────────────────
+echo ""
+log "Cloudflare Tunnel setup"
+echo ""
+echo -e "  Run this to install cloudflared as a service using your tunnel token:"
+echo ""
+echo -e "  ${CYAN}cloudflared service install <YOUR_TUNNEL_TOKEN>${NC}"
+echo ""
+echo -e "  Get the token from: Cloudflare Zero Trust → Networks → Tunnels → your tunnel → Configure"
+echo ""
+echo -e "  Then verify the tunnel is routing:"
+echo -e "  ${CYAN}https://vscars.latenightstack.com/api/health${NC}"
+echo ""
+
+echo -e "${GREEN}✅ Deploy complete.${NC}"
+echo ""
+echo "  Service commands:"
+echo "    sudo systemctl status vscars"
+echo "    journalctl -u vscars -f"
+echo "    sudo systemctl restart vscars"
+echo ""
+echo "  Env: $ENV_FILE"
+echo ""

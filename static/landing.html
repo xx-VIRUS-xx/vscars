@@ -22,8 +22,8 @@
   --accent:#7c3aed;
   --accent-2:#06b6d4;
   --accent-3:#f59e0b;
-  --gradient:linear-gradient(135deg,#7c3aed 0%,#06b6d4 100%);
-  --gradient-text:-webkit-linear-gradient(135deg,#a78bfa,#22d3ee);
+  --gradient:linear-gradient(135deg,#6366f1 0%,#22d3ee 100%);
+  --gradient-text:-webkit-linear-gradient(135deg,#818cf8,#67e8f9);
   --glow:0 0 40px rgba(124,58,237,0.3);
   --success:#22d3ee;
   --error:#f87171;
@@ -502,6 +502,11 @@ footer{
 </head>
 <body>
 
+<!-- ───────────── BETA BANNER ───────────── -->
+<div style="background:linear-gradient(90deg,#7c3aed,#06b6d4);color:#fff;text-align:center;padding:8px 16px;font-size:13px;font-weight:500;letter-spacing:0.3px;">
+  🚀 <strong>VSCARS Beta</strong> — Free access. 5 AI requests/day. <a href="/app" style="color:#fff;text-decoration:underline;margin-left:6px;">Try it now →</a>
+</div>
+
 <!-- ───────────── NAV ───────────── -->
 <nav>
   <a href="/" class="nav-brand" style="color:var(--fg)">
@@ -529,25 +534,25 @@ footer{
     </div>
 
     <h1>
-      Your ideas don't wait<br>
-      for <span class="grad-text">9&#8209;5.</span>
+      Your Dev Machine.<br>
+      <span class="grad-text">Fully Autonomous.</span>
     </h1>
 
     <p class="hero-para">
-      You get your best ideas after work. Stop losing them. VSCARS puts your entire dev machine in your pocket&nbsp;&mdash; files, terminal, AI, git&nbsp;&mdash; all from your phone.
+      Install the VSCARS CLI on your machine. Connect it to our relay. Control your terminal, files, git, and AI agents from any phone, tablet, or browser &mdash; wherever you are.
     </p>
 
     <div class="hero-cta">
-      <a href="/setup" class="btn-primary">Start for free</a>
+      <a href="/setup" class="btn-primary">Get Started Free →</a>
       <a href="#terminal-demo" class="btn-ghost">See how it works</a>
     </div>
 
     <div class="social-proof">
-      <span>Used by 1,200+ developers</span>
+      <span>Public beta</span>
       <span class="social-proof-dot"></span>
-      <span>Free tier</span>
+      <span>Free — no credit card</span>
       <span class="social-proof-dot"></span>
-      <span>No credit card</span>
+      <span>Your machine, your files</span>
     </div>
   </div>
 </section>
@@ -627,21 +632,21 @@ footer{
         <div class="story-card">
           <div class="story-card-inner">
             <p class="story-quote">
-              &ldquo;Shipped a feature from the airport lounge. My laptop was in checked baggage.&rdquo;
+              &ldquo;I had an idea at 11pm. My laptop was in the next room. I shipped it from my phone.&rdquo;
             </p>
-            <p class="story-author">&#8212; @dev_somewhere, Twitter/X</p>
+            <p class="story-author">&#8212; The reason VSCARS exists</p>
             <div class="stat-pills">
               <div class="stat-pill">
                 <span class="stat-pill-dot"></span>
-                12,000+ commits from mobile
+                Public beta &mdash; free to join
               </div>
               <div class="stat-pill">
                 <span class="stat-pill-dot"></span>
-                3 min avg session
+                Your machine. Your files. Your agents.
               </div>
               <div class="stat-pill">
                 <span class="stat-pill-dot"></span>
-                4.9&#9733; rating
+                Setup in under 3 minutes
               </div>
             </div>
           </div>
@@ -677,22 +682,22 @@ footer{
           </tr>
           <tr>
             <td>View files</td>
-            <td class="cross">&#8212;</td><td class="check">&#10003;</td>
+            <td class="check">&#10003;</td><td class="check">&#10003;</td>
             <td class="check">&#10003;</td><td class="check">&#10003;</td>
           </tr>
           <tr>
             <td>Edit &amp; create files</td>
-            <td class="cross">&#8212;</td><td class="check">&#10003;</td>
+            <td class="check">&#10003;</td><td class="check">&#10003;</td>
             <td class="check">&#10003;</td><td class="check">&#10003;</td>
           </tr>
           <tr>
             <td>Run shell commands</td>
-            <td class="cross">&#8212;</td><td class="check">&#10003;</td>
+            <td class="check">&#10003;</td><td class="check">&#10003;</td>
             <td class="check">&#10003;</td><td class="check">&#10003;</td>
           </tr>
           <tr>
-            <td>Machine connector required</td>
-            <td class="cross">&#8212;</td><td class="check">&#10003;</td>
+            <td>Machine connector (CLI on your machine)</td>
+            <td class="check">&#10003;</td><td class="check">&#10003;</td>
             <td class="check">&#10003;</td><td class="check">&#10003;</td>
           </tr>
           <tr>
@@ -713,72 +718,15 @@ footer{
 
 <!-- ───────────── PRICING ───────────── -->
 <section id="pricing">
-  <div class="section-inner">
-    <span class="section-eyebrow">Pricing</span>
-    <h2 class="section-title">Simple pricing. No surprises.</h2>
-    <p class="section-sub">Add VSCARS on top of your Copilot subscription. Cancel anytime.</p>
-
-    <div class="pricing-grid">
-      <!-- Free -->
-      <div class="price-card">
-        <div class="pc-name">Free</div>
-        <div class="pc-price"><sup>$</sup>0<sub> forever</sub></div>
-        <ul class="pc-features">
-          <li>AI chat only</li>
-          <li>50 API calls / day</li>
-          <li class="no">No file/terminal access</li>
-          <li class="no">No machine connector</li>
-          <li class="no">No git operations</li>
-        </ul>
-        <a href="/setup" class="btn-pc btn-pc-outline">Get started</a>
-      </div>
-
-      <!-- Pro — featured -->
-      <div class="price-card-featured-wrap" style="position:relative">
-        <span class="popular-badge">Most Popular</span>
-        <div class="price-card">
-          <div class="pc-name" style="color:#a78bfa">Pro</div>
-          <div class="pc-price grad-text"><sup style="-webkit-text-fill-color:unset;background:none">$</sup>9<sub style="-webkit-text-fill-color:unset;background:none;color:var(--muted)"> / mo</sub></div>
-          <ul class="pc-features">
-            <li>Full machine control</li>
-            <li>1000 API calls / day</li>
-            <li>Files + terminal + git</li>
-            <li>AI + Copilot tools</li>
-            <li>Runs on your own machine</li>
-          </ul>
-          <a href="/setup" class="btn-pc btn-pc-grad">Start Pro</a>
-        </div>
-      </div>
-
-      <!-- Team -->
-      <div class="price-card">
-        <div class="pc-name" style="color:#22d3ee">Team</div>
-        <div class="pc-price" style="color:#22d3ee"><sup>$</sup>29<sub> / mo</sub></div>
-        <ul class="pc-features">
-          <li>Everything in Pro</li>
-          <li>Unlimited API calls</li>
-          <li>Multi-user + multi-machine</li>
-          <li>Shared workspaces</li>
-          <li>Priority support</li>
-        </ul>
-        <a href="/setup" class="btn-pc" style="background:rgba(6,182,212,0.15);border:1px solid rgba(6,182,212,0.3);color:#22d3ee;border-radius:8px;font-weight:700;font-size:14px;text-align:center;display:block;padding:12px;transition:background .2s" onmouseover="this.style.background='rgba(6,182,212,0.25)'" onmouseout="this.style.background='rgba(6,182,212,0.15)'">Start Team</a>
-      </div>
-
-      <!-- Self-Hosted -->
-      <div class="price-card">
-        <div class="pc-name" style="color:#fbbf24">Self-Hosted</div>
-        <div class="pc-price" style="color:#fbbf24"><sup>$</sup>49<sub> one-time</sub></div>
-        <div class="pc-subprice">or $19 / month</div>
-        <ul class="pc-features">
-          <li>Run your own relay server</li>
-          <li>Unlimited everything</li>
-          <li>License key activation</li>
-          <li>Monthly or lifetime</li>
-          <li>All future updates</li>
-        </ul>
-        <a href="/setup" class="btn-pc btn-pc-amber">Buy License</a>
-      </div>
+  <div class="section-inner" style="text-align:center;max-width:600px;margin:0 auto">
+    <span class="section-eyebrow">Beta Access</span>
+    <h2 class="section-title">Free during beta.</h2>
+    <p class="section-sub">VSCARS is in public beta. Sign up free — 5 AI requests/day, no credit card. Connect your own machine to unlock file access, terminal, and git tools.</p>
+    <div style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-top:32px">
+      <a href="/setup" class="btn-primary" style="padding:14px 32px;font-size:15px">Get started free →</a>
+      <a href="/app" class="btn-ghost" style="padding:14px 32px;font-size:15px">Open app</a>
     </div>
+    <p style="margin-top:24px;font-size:13px;color:var(--muted)">Paid plans coming soon. Beta users get early access.</p>
   </div>
 </section>
 
@@ -790,37 +738,37 @@ footer{
 
     <div class="faq-list">
       <details class="faq-item">
-        <summary>Does my laptop need to be on?</summary>
+        <summary>Does my machine need to be on?</summary>
         <div class="faq-body">
-          Yes &mdash; VSCARS is a bridge, not a cloud VM. Your laptop stays on, and your phone connects through a secure Ngrok HTTPS tunnel. Think of it as a remote control for your actual machine, not a replacement.
+          Yes &mdash; VSCARS is a remote control, not a cloud VM. The <code style="font-family:var(--mono);font-size:13px">vscars start</code> connector must be running on your machine. Your phone talks to our relay, the relay talks to the connector on your machine. Turn the machine off and the session pauses until it's back.
         </div>
       </details>
 
       <details class="faq-item">
-        <summary>I already pay for Copilot. What am I paying for?</summary>
+        <summary>How does AI Chat work in beta?</summary>
         <div class="faq-body">
-          VSCARS is the mobile interface and infrastructure layer. Your GitHub Copilot subscription key stays yours &mdash; we never touch it. You're paying for the thing that lets you use Copilot from your phone at 10pm.
+          You bring your own API key &mdash; Claude, OpenAI Codex, or GitHub Copilot. Configure it in Settings. VSCARS routes your requests through your own key. We never store your key on the server. Beta gives you 5 AI requests/day; paid plans increase that limit.
         </div>
       </details>
 
       <details class="faq-item">
-        <summary>Is it safe to expose my terminal?</summary>
+        <summary>Is it safe to expose my terminal remotely?</summary>
         <div class="faq-body">
-          JWT authentication, rate limiting, a command audit log, and HTTPS via Ngrok's encrypted tunnel. The self-hosted plan keeps everything on your own network &mdash; nothing routes through our servers. You stay in control.
+          Your terminal is never "exposed" &mdash; all traffic routes through an encrypted WebSocket to our relay over HTTPS. The connector only accepts commands from authenticated users (JWT + API key). You can also set a Trust Policy in the app to block destructive commands or require approval before execution.
         </div>
       </details>
 
       <details class="faq-item">
-        <summary>Can I install it like an app?</summary>
+        <summary>Can I add it to my phone's home screen?</summary>
         <div class="faq-body">
-          Yes. VSCARS is a PWA. Open it in mobile Safari or Chrome, tap "Add to Home Screen," and it launches like a native app &mdash; full-screen, offline-capable splash, the whole thing.
+          Yes. VSCARS is a PWA. Open <strong>vscars.latenightstack.com/app</strong> in mobile Safari or Chrome, tap "Add to Home Screen," and it launches like a native app &mdash; full-screen, fast, works offline for the UI.
         </div>
       </details>
 
       <details class="faq-item">
-        <summary>What if I only want to use it solo?</summary>
+        <summary>Which machines can I connect?</summary>
         <div class="faq-body">
-          Pro plan is built for solo devs. Team is for when you want to give a collaborator or contractor access without handing them SSH credentials. The self-hosted plan works for either.
+          Any machine running macOS or Linux with Python 3.10+. Your work laptop, a home server, a cloud VPS &mdash; anything you can SSH into, you can also connect to VSCARS. One machine per account in beta; multi-machine coming with paid plans.
         </div>
       </details>
     </div>
@@ -837,10 +785,10 @@ footer{
     </h2>
     <p>Stop losing ideas to exhaustion. Set up in 2 minutes.</p>
     <a href="/setup" class="btn-primary" style="font-size:18px;padding:16px 40px">
-      Start free &mdash; no credit card
+      Get started free &mdash; no credit card
     </a>
     <p class="cta-note">
-      Or <a href="/setup">buy a self-hosted license for $49</a>. Own it forever.
+      <a href="/app">Already have an account? Sign in →</a>
     </p>
   </div>
 </section>

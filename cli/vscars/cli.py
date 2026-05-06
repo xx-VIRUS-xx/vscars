@@ -63,8 +63,8 @@ def cmd_init(args):
 
     # API key
     print()
-    print("Your API key is shown in the VSCARS dashboard after subscribing.")
-    print(f"  → {server_url}/app  (go to Settings → API Key)")
+    print("Your API key is in the app under Plan & Billing → Generate API Key.")
+    print(f"  → {server_url}/app")
     print()
     existing_key = existing.get("api_key", "")
     if existing_key:
@@ -88,13 +88,7 @@ def cmd_init(args):
         sys.exit(1)
 
     key_info = r.json()
-    if not key_info.get("can_use_machine"):
-        plan = key_info.get("plan", "free")
-        print(f"❌ Your current plan ({plan}) does not include machine access.")
-        print(f"   Upgrade to Pro at: {server_url}/#pricing")
-        sys.exit(1)
-
-    print(f"✅ API key valid  (plan: {key_info.get('plan')})")
+    print(f"✅ API key valid  (plan: {key_info.get('plan', 'beta')})")
 
     # Machine details
     machine_id = existing.get("machine_id") or str(uuid.uuid4())
@@ -116,7 +110,7 @@ def cmd_init(args):
         detail = r.json().get("detail", {})
         msg = detail.get("message", str(detail)) if isinstance(detail, dict) else str(detail)
         print(f"❌ {msg}")
-        print(f"   Upgrade at: {server_url}/#pricing")
+        print(f"   Setup guide: {server_url}/setup")
         sys.exit(1)
 
     if r.status_code != 200:

@@ -2,6 +2,8 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request, WebSocket,
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 import asyncio
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
@@ -53,7 +55,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 # Create FastAPI app
 app = FastAPI(
-    title="VS Code Copilot Mobile Controller",
+    title="VSCARS",
     description="Control VS Code and Copilot from your mobile device worldwide",
     version="1.0.0"
 )
@@ -65,14 +67,18 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Billing router
 app.include_router(billing_router)
 
+# Trust proxy headers from Cloudflare Tunnel (runs on 127.0.0.1)
+# This makes request.url.scheme and client IP reflect the real values
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="127.0.0.1")
+
 # CORS — restrict to known origins
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-VSCARS-Key"],
 )
 
 # Security headers on every response
@@ -167,8 +173,11 @@ async def register(request: Request, user_data: UserRegister, db: Session = Depe
     db.commit()
     db.refresh(new_user)
 
-    # Set permissions based on plan (first user = pro, others = free)
+    # Set permissions and auto-issue API key for every new user
     apply_plan_to_permissions(new_user, db)
+    if not new_user.api_key_hash:
+        from app.billing.plan_limits import issue_api_key
+        issue_api_key(new_user, db)
 
     # Welcome email (non-blocking — ignore failure)
     try:
@@ -2131,7 +2140,7 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "ok",
-        "app": "VS Code Copilot Mobile Controller",
+        "app": "VSCARS",
         "version": "1.0.0",
         "public_url": ""
     }
@@ -2444,7 +2453,7 @@ async def get_api_key_status(request: Request, db: Session = Depends(get_db)):
     return {
         "has_key": bool(current_user.api_key_hash),
         "plan": current_user.plan,
-        "can_use_machine": current_user.plan in ("pro", "team", "self_hosted") or current_user.is_superuser,
+        "can_use_machine": True,  # all registered users can connect their machine
     }
 
 
@@ -2454,18 +2463,7 @@ async def generate_api_key(
     db: Session = Depends(get_db),
 ):
     """Issue or regenerate the CLI API key. Returns the raw key — shown once.
-    Requires a paid plan (or superuser)."""
-    if not current_user.is_superuser:
-        perm = db.query(UserPermission).filter(UserPermission.user_id == current_user.id).first()
-        if not perm or not perm.can_use_machine:
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "message": "CLI API keys require a Pro plan or above.",
-                    "code": "plan_required",
-                    "upgrade_url": "/billing",
-                },
-            )
+    Available to all registered users."""
     from app.billing.plan_limits import issue_api_key
     raw_key = issue_api_key(current_user, db)
     return {
@@ -2512,14 +2510,20 @@ async def dashboard_brief(current_user: User = Depends(get_current_user), db: Se
         IdeaNote.is_done == False
     ).count()
 
-    recent_commits = git_log(5)
-    git_stat = git_status()
+    try:
+        recent_commits = git_log(5)
+        git_stat = git_status()
+        git_status_out = git_stat.get("output", "") if "fatal" not in git_stat.get("output", "") else "No git repo connected"
+        recent_commits_out = recent_commits.get("output", "") if "fatal" not in recent_commits.get("output", "") else ""
+    except Exception:
+        git_status_out = "No git repo connected"
+        recent_commits_out = ""
 
     return {
         "commands_today": commands_today,
         "ideas_pending": ideas_pending,
-        "git_status": git_stat.get("output", ""),
-        "recent_commits": recent_commits.get("output", ""),
+        "git_status": git_status_out,
+        "recent_commits": recent_commits_out,
         "plan": current_user.plan,
         "daily_api_calls": current_user.daily_api_calls,
     }
@@ -2567,18 +2571,6 @@ async def register_machine(
         current_user = db.query(User).filter(User.username == username, User.is_active == True).first()
         if not current_user:
             raise HTTPException(status_code=401, detail="User not found")
-
-    if not current_user.is_superuser:
-        perm = db.query(UserPermission).filter(UserPermission.user_id == current_user.id).first()
-        if not perm or not perm.can_use_machine:
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "message": "Machine registration requires a Pro plan or above.",
-                    "code": "plan_required",
-                    "upgrade_url": "https://vscars.latenightstack.com/#pricing",
-                },
-            )
 
     machine_id = (data.get("machine_id") or "").strip()
     name = (data.get("name") or "My Machine").strip()[:64]

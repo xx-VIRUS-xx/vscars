@@ -260,7 +260,8 @@ class VSCodeTools:
             return f"❌ Error listing files: {str(e)}"
     
     @staticmethod
-    def ask_copilot(query: str) -> str:
+    def ask_copilot(prompt: str = "", query: str = "") -> str:
+        query = prompt or query  # accept either param name
         """GitHub Copilot Chat via GitHub Models API
         
         Uses your paid GitHub Copilot subscription to call AI models 
@@ -400,7 +401,8 @@ class VSCodeTools:
             return f"❌ Error: {str(e)}"
     
     @staticmethod
-    def ask_ai(query: str, provider: str = "auto") -> str:
+    def ask_ai(prompt: str = "", query: str = "", provider: str = "auto") -> str:
+        query = prompt or query  # accept either param name
         """Multi-provider AI chat. provider: auto | copilot | claude | openai
         'auto' picks the first available key: Copilot → Claude → OpenAI."""
 

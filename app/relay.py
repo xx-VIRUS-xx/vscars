@@ -1,12 +1,10 @@
 """
 WebSocket relay manager.
 
-Each pro+ user runs `vscars start` on their own laptop. That opens a persistent
-WebSocket to /ws/agent/{token}. When the user issues an FS/terminal/git tool call
-from the web UI, the server forwards it here and awaits the result — the host
-filesystem is never touched.
-
-Superusers bypass the relay entirely (they ARE the host).
+Each registered user runs `vscars start` on their own machine. That opens a
+persistent WebSocket to /ws/agent/{token}. When the user issues a tool call from
+the web UI, the server relays it to their machine and awaits the result.
+The server's own filesystem is never touched for regular users.
 """
 
 import asyncio

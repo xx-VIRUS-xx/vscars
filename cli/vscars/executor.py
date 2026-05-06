@@ -29,15 +29,17 @@ def _get_workspace() -> str:
 
 def _resolve(path: str) -> str:
     workspace = os.path.realpath(_get_workspace())
+    path = os.path.expanduser(path)
     if os.path.isabs(path):
         resolved = os.path.realpath(path)
     else:
         resolved = os.path.realpath(os.path.join(workspace, path))
-    if resolved.startswith(workspace + os.sep) or resolved == workspace:
+    # Allow workspace itself, anything inside it, or /tmp
+    if resolved == workspace or resolved.startswith(workspace + os.sep):
         return resolved
-    if resolved.startswith("/tmp/"):
+    if resolved.startswith("/tmp/") or resolved == "/tmp":
         return resolved
-    raise ValueError(f"Access denied: path '{path}' is outside the workspace")
+    raise ValueError(f"Access denied: '{path}' is outside the workspace ({workspace})")
 
 
 # ─── Tool handlers ────────────────────────────────────────────────────────────
@@ -239,9 +241,9 @@ def open_terminal(path: Optional[str] = None) -> str:
     try:
         if platform.system() == "Darwin":
             subprocess.Popen(["open", "-a", "Terminal", target])
-        elif platform.system() == "Linux":
-            subprocess.Popen(["xterm", "-e", f"cd {shlex.quote(target)} && bash"])
-        return f"✅ Terminal opened at {target}"
+            return f"✅ Terminal opened at {target}"
+        # On Linux/servers there's usually no GUI — return the path instead
+        return f"ℹ No GUI terminal available. SSH to this machine and cd {target}"
     except Exception as e:
         return f"❌ Error: {e}"
 

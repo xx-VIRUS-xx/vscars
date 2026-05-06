@@ -2,104 +2,380 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>VSCARS Setup Guide</title>
-<meta name="description" content="Install and connect your machine to VSCARS in minutes.">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VSCARS — Setup Guide</title>
+<meta name="description" content="Connect your machine to VSCARS in under 3 minutes.">
+<meta name="theme-color" content="#070711">
 <style>
-:root{--bg:#0b1020;--card:#121933;--card2:#0f1530;--b:#22305f;--t:#e6ecff;--m:#9fb0de;--a:#4fd1c5;--a2:#6ee7b7;--danger:#ff7a7a}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(1000px 500px at 80% -10%,#1d2a58 0,#0b1020 55%);color:var(--t);font-family:ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.55}
-.wrap{max-width:980px;margin:0 auto;padding:32px 18px 70px}
-.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
-.brand{font-weight:800;letter-spacing:.4px}
-.btn{display:inline-block;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:700;border:1px solid var(--b);color:var(--t);background:var(--card2)}
-.btn.primary{background:linear-gradient(135deg,var(--a),var(--a2));color:#04161a;border:none}
-.hero{background:linear-gradient(180deg,#121b3a 0,#0f1631 100%);border:1px solid var(--b);border-radius:16px;padding:22px;margin-bottom:16px}
-.hero h1{margin:0 0 8px;font-size:29px;letter-spacing:-.6px}
-.hero p{margin:0;color:var(--m)}
-.grid{display:grid;grid-template-columns:1fr;gap:14px}
-@media(min-width:900px){.grid{grid-template-columns:1fr 1fr}}
-.card{background:var(--card);border:1px solid var(--b);border-radius:14px;padding:16px}
-.card h2{margin:0 0 8px;font-size:18px}
-.card p{margin:0 0 10px;color:var(--m)}
-code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-pre{margin:0;background:#0a1128;border:1px solid #27335f;border-radius:10px;padding:12px;white-space:pre-wrap;word-break:break-word;color:#d9e4ff;font-size:13px}
-ol{margin:8px 0 0 18px;padding:0}
-li{margin:8px 0;color:var(--m)}
-li strong{color:var(--t)}
-.note{font-size:13px;color:var(--m)}
-.warn{border:1px solid #684647;background:#281a1f;color:#ffc6c6;padding:10px 12px;border-radius:10px;margin-top:10px}
-.kv{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-.pill{font-size:12px;border:1px solid #2a3a6e;border-radius:999px;padding:4px 8px;color:#b7c7f6}
-.foot{margin-top:18px;display:flex;gap:10px;flex-wrap:wrap}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#070711;--surface:rgba(255,255,255,0.032);
+  --border:rgba(255,255,255,0.08);--border-hi:rgba(129,140,248,0.4);
+  --t1:#ececec;--t2:#666672;--t3:#35353d;
+  --a:#818cf8;--a2:#22d3ee;
+  --ok:#4ade80;
+  --blur:blur(20px);
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --mono:'SF Mono','Cascadia Code','Fira Code',Consolas,monospace;
+}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);color:var(--t1);
+  font-family:var(--font);line-height:1.6;
+  min-height:100vh;
+}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse 70% 50% at 20% -5%,rgba(99,102,241,0.14) 0%,transparent 55%),
+    radial-gradient(ellipse 50% 40% at 85% 90%,rgba(6,182,212,0.09) 0%,transparent 50%);
+}
+a{color:var(--a);text-decoration:none}
+a:hover{opacity:.8}
+
+/* ── NAV ── */
+nav{
+  position:sticky;top:0;z-index:100;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 40px;
+  background:rgba(7,7,17,0.8);
+  backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+  border-bottom:1px solid rgba(129,140,248,0.1);
+}
+.brand{
+  font-weight:800;font-size:16px;letter-spacing:-.3px;
+  background:linear-gradient(135deg,#818cf8,#67e8f9);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.nav-right{display:flex;gap:10px}
+.btn-nav{
+  padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;
+  transition:opacity .18s,box-shadow .18s;
+}
+.btn-outline{
+  border:1px solid var(--border-hi);color:var(--t1);background:transparent;
+}
+.btn-outline:hover{background:rgba(129,140,248,0.07)}
+.btn-grad{
+  background:linear-gradient(135deg,#6366f1,#22d3ee);color:#fff;border:none;
+  box-shadow:0 0 20px rgba(99,102,241,0.3);
+}
+.btn-grad:hover{opacity:.9;box-shadow:0 0 32px rgba(99,102,241,0.5)}
+
+/* ── WRAP ── */
+.wrap{max-width:960px;margin:0 auto;padding:56px 24px 80px;position:relative;z-index:1}
+
+/* ── HERO ── */
+.hero{
+  text-align:center;margin-bottom:60px;
+}
+.pill{
+  display:inline-flex;align-items:center;gap:7px;
+  padding:5px 14px;border-radius:999px;margin-bottom:24px;
+  background:rgba(129,140,248,0.1);border:1px solid rgba(129,140,248,0.3);
+  font-size:12px;font-weight:600;color:var(--a2);
+}
+.pill-dot{width:6px;height:6px;border-radius:50%;background:var(--a2);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+.hero h1{
+  font-size:clamp(32px,5vw,52px);font-weight:900;
+  letter-spacing:-1.5px;line-height:1.1;margin-bottom:16px;
+}
+.grad{
+  background:linear-gradient(135deg,#818cf8,#67e8f9);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.hero p{font-size:17px;color:var(--t2);max-width:500px;margin:0 auto 32px;line-height:1.7}
+
+/* Steps ribbon */
+.steps-ribbon{
+  display:flex;align-items:center;justify-content:center;gap:0;flex-wrap:wrap;
+  margin-bottom:0;
+}
+.step-pill{
+  display:flex;align-items:center;gap:8px;
+  padding:8px 16px;font-size:13px;font-weight:600;color:var(--t2);
+  background:rgba(255,255,255,0.03);border:1px solid var(--border);
+  border-radius:999px;margin:4px 6px;
+  transition:color .2s,border-color .2s;
+}
+.step-pill:hover{color:var(--t1);border-color:var(--border-hi)}
+.step-num{
+  width:20px;height:20px;border-radius:50%;
+  background:linear-gradient(135deg,#6366f1,#22d3ee);
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:800;color:#fff;flex-shrink:0;
+}
+
+/* ── STEPS GRID ── */
+.steps{display:flex;flex-direction:column;gap:16px}
+.step-card{
+  background:var(--surface);
+  backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+  border:1px solid var(--border);border-radius:16px;
+  padding:28px 32px;
+  position:relative;overflow:hidden;
+  transition:border-color .2s,box-shadow .2s;
+}
+.step-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,0.07),transparent);
+}
+.step-card:hover{
+  border-color:rgba(129,140,248,0.25);
+  box-shadow:0 8px 40px rgba(0,0,0,0.4),0 0 0 1px rgba(129,140,248,0.08);
+}
+.step-header{
+  display:flex;align-items:center;gap:14px;margin-bottom:18px;
+}
+.step-badge{
+  width:36px;height:36px;border-radius:10px;flex-shrink:0;
+  background:linear-gradient(135deg,#6366f1,#22d3ee);
+  display:flex;align-items:center;justify-content:center;
+  font-size:15px;font-weight:900;color:#fff;
+  box-shadow:0 0 16px rgba(99,102,241,0.35);
+}
+.step-header h2{font-size:16px;font-weight:700;letter-spacing:-.3px}
+.step-header p{font-size:12px;color:var(--t2);margin-top:2px}
+.step-body{padding-left:50px}
+
+/* Code block */
+.code-block{
+  background:rgba(2,2,8,0.7);
+  border:1px solid rgba(255,255,255,0.06);
+  border-radius:12px;padding:16px 18px;
+  font-family:var(--mono);font-size:13px;line-height:1.8;
+  color:#b0b8cc;position:relative;margin:12px 0;
+  overflow-x:auto;
+}
+.code-block .comment{color:#3d4766}
+.code-block .cmd{color:#93c5fd}
+.code-block .success{color:#4ade80}
+.code-block .muted{color:#475569}
+.copy-btn{
+  position:absolute;top:10px;right:10px;
+  background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);
+  border-radius:7px;padding:4px 10px;
+  font-size:11px;color:var(--t2);cursor:pointer;font-family:var(--font);
+  transition:background .15s,color .15s;
+}
+.copy-btn:hover{background:rgba(129,140,248,0.15);color:var(--t1)}
+.copy-btn.copied{color:var(--ok)}
+
+/* Info / warn callouts */
+.callout{
+  display:flex;gap:10px;align-items:flex-start;
+  border-radius:10px;padding:12px 14px;
+  font-size:13px;line-height:1.6;margin:10px 0;
+}
+.callout-ok{background:rgba(74,222,128,0.06);border:1px solid rgba(74,222,128,0.2);color:#a7f3d0}
+.callout-info{background:rgba(103,232,249,0.06);border:1px solid rgba(103,232,249,0.2);color:#a5f3fc}
+.callout-warn{background:rgba(251,191,36,0.06);border:1px solid rgba(251,191,36,0.2);color:#fde68a}
+.callout-icon{flex-shrink:0;margin-top:1px}
+
+/* Sub-steps list */
+ol.sub-steps{padding-left:20px;display:flex;flex-direction:column;gap:8px;margin:12px 0}
+ol.sub-steps li{font-size:14px;color:var(--t2);padding-left:4px}
+ol.sub-steps li strong{color:var(--t1)}
+ol.sub-steps a{color:var(--a2)}
+
+/* Final CTA */
+.final{
+  margin-top:48px;
+  background:linear-gradient(135deg,rgba(99,102,241,0.12) 0%,rgba(6,182,212,0.08) 100%);
+  border:1px solid rgba(129,140,248,0.25);
+  border-radius:20px;padding:40px 32px;text-align:center;
+}
+.final h2{font-size:clamp(22px,3vw,32px);font-weight:800;letter-spacing:-.5px;margin-bottom:12px}
+.final p{color:var(--t2);font-size:15px;margin-bottom:28px}
+.final-btns{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+
+/* Footer */
+footer{
+  border-top:1px solid rgba(129,140,248,0.08);
+  padding:24px 40px;text-align:center;
+  font-size:12px;color:var(--t3);
+  position:relative;z-index:1;
+}
+
+@media(max-width:640px){
+  nav{padding:12px 20px}
+  .wrap{padding:40px 16px 60px}
+  .step-body{padding-left:0;margin-top:12px}
+  .step-card{padding:20px}
+}
 </style>
 </head>
 <body>
+
+<nav>
+  <span class="brand">&lt;/&gt; VSCARS</span>
+  <div class="nav-right">
+    <a href="/" class="btn-nav btn-outline">← Home</a>
+    <a href="/app" class="btn-nav btn-grad">Open App →</a>
+  </div>
+</nav>
+
 <div class="wrap">
-  <div class="top">
-    <div class="brand">VSCARS Setup</div>
-    <div>
-      <a class="btn" href="/">Back to site</a>
-      <a class="btn primary" href="/app">Open App Login</a>
+
+  <!-- ── HERO ── -->
+  <div class="hero">
+    <div class="pill">
+      <span class="pill-dot"></span>
+      <span>Beta — Free to connect your own machine</span>
+    </div>
+    <h1>Set up in <span class="grad">under 3 minutes</span></h1>
+    <p>Install the VSCARS CLI on your machine, connect it to the relay, and control it from anywhere — phone, tablet, or any browser.</p>
+    <div class="steps-ribbon">
+      <div class="step-pill"><div class="step-num">1</div> Install CLI</div>
+      <div class="step-pill"><div class="step-num">2</div> Create Account</div>
+      <div class="step-pill"><div class="step-num">3</div> Get API Key</div>
+      <div class="step-pill"><div class="step-num">4</div> Connect &amp; Go</div>
     </div>
   </div>
 
-  <section class="hero">
-    <h1>Setup first, then login and control your machine</h1>
-    <p>Free account gives access to the app and API, but remote machine control starts after you install and connect the local connector.</p>
-    <div class="kv">
-      <span class="pill">1. Install connector</span>
-      <span class="pill">2. Generate API key</span>
-      <span class="pill">3. Connect machine</span>
-      <span class="pill">4. Login and use app</span>
-    </div>
-  </section>
+  <!-- ── STEPS ── -->
+  <div class="steps">
 
-  <div class="grid">
-    <section class="card">
-      <h2>Step 1: Install Connector (Easy)</h2>
-      <p>Run this one command on your laptop/desktop:</p>
-      <pre id="install-command">curl -fsSL "https://your-domain/static/install-connector.sh" | bash</pre>
-      <p class="note">This installs the VSCARS connector command and validates prerequisites.</p>
-    </section>
-
-    <section class="card">
-      <h2>Step 2: Generate API Key</h2>
-      <ol>
-        <li><strong>Open the app</strong> and sign in: <a href="/app" style="color:#7ee7dc">/app</a></li>
-        <li><strong>Go to Plan &amp; Billing</strong> and click <em>Generate API Key</em> (Pro+ required for machine access).</li>
-      </ol>
-      <div class="warn">Free plan supports AI chat only. Machine control requires Pro / Team / Self-Hosted.</div>
-    </section>
-
-    <section class="card">
-      <h2>Step 3: Connect This Machine</h2>
-      <p>Initialize and start connector:</p>
-      <pre>vscars init
-# enter server URL and API key
-vscars start</pre>
-      <p class="note">Keep this running. Your machine appears in <strong>My Machines</strong> once connected.</p>
-    </section>
-
-    <section class="card">
-      <h2>Step 4: Login and Play</h2>
-      <ol>
-        <li>Open <a href="/app" style="color:#7ee7dc">/app</a></li>
-        <li>Go to <strong>My Machines</strong> and verify status is online</li>
-        <li>Run commands/files from Terminal and Files views</li>
-      </ol>
-      <div class="foot">
-        <a class="btn primary" href="/app">Login to App</a>
-        <a class="btn" href="/static/install-connector.sh">View installer script</a>
+    <!-- Step 1 -->
+    <div class="step-card">
+      <div class="step-header">
+        <div class="step-badge">1</div>
+        <div>
+          <h2>Install the VSCARS CLI</h2>
+          <p>Run this on the machine you want to control (your laptop or server)</p>
+        </div>
       </div>
-    </section>
+      <div class="step-body">
+        <div class="code-block" id="install-block">
+          <span class="comment"># One-line install — works on macOS &amp; Linux</span><br>
+          <span class="cmd" id="install-cmd">curl -fsSL "https://your-domain/static/install-connector.sh" | bash</span>
+          <button class="copy-btn" onclick="copyCode('install-cmd',this)">Copy</button>
+        </div>
+        <div class="callout callout-info">
+          <span class="callout-icon">ℹ</span>
+          <span>Installs the <code style="font-family:var(--mono);font-size:12px">vscars</code> command. Requires Python 3.9+ and pip. Windows users: use WSL or PowerShell with Python installed.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div class="step-card">
+      <div class="step-header">
+        <div class="step-badge">2</div>
+        <div>
+          <h2>Create a free account</h2>
+          <p>Every account gets machine access in beta — no credit card needed</p>
+        </div>
+      </div>
+      <div class="step-body">
+        <ol class="sub-steps">
+          <li>Open the app: <a href="/app" target="_blank" rel="noopener"><strong>/app</strong></a></li>
+          <li>Click <strong>Register</strong> and create your account</li>
+          <li>You're automatically on the <strong>Beta plan</strong> — 5 AI requests/day + full machine access</li>
+        </ol>
+        <div class="callout callout-ok">
+          <span class="callout-icon">✓</span>
+          <span>Beta accounts can connect their own machine. The server is a relay only — your files never leave your machine.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3 -->
+    <div class="step-card">
+      <div class="step-header">
+        <div class="step-badge">3</div>
+        <div>
+          <h2>Generate your CLI API key</h2>
+          <p>One key links the CLI on your machine to your account</p>
+        </div>
+      </div>
+      <div class="step-body">
+        <ol class="sub-steps">
+          <li>In the app, go to <strong>Plan &amp; Billing</strong> (◬ icon in the sidebar)</li>
+          <li>Scroll to <strong>CLI API Key</strong> and click <strong>Generate API Key</strong></li>
+          <li><strong>Copy and save the key</strong> — it's shown only once</li>
+        </ol>
+        <div class="callout callout-warn">
+          <span class="callout-icon">⚠</span>
+          <span>Save the key immediately — it cannot be retrieved after you close the page. If you lose it, regenerate a new one (this disconnects existing machines).</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 4 -->
+    <div class="step-card">
+      <div class="step-header">
+        <div class="step-badge">4</div>
+        <div>
+          <h2>Connect your machine</h2>
+          <p>Run these two commands on the machine you installed the CLI on</p>
+        </div>
+      </div>
+      <div class="step-body">
+        <div class="code-block">
+          <span class="comment"># Initialize with your server URL and API key</span><br>
+          <span class="cmd">vscars init</span><br>
+          <span class="muted">  → Enter server URL: </span><span id="server-url-hint" style="color:#67e8f9"></span><br>
+          <span class="muted">  → Enter API key: vscars_…</span><br><br>
+          <span class="comment"># Start the connector (keep this running)</span><br>
+          <span class="cmd">vscars start</span><br>
+          <span class="success">✓ Connected — your machine appears in My Machines</span>
+        </div>
+        <div class="callout callout-info">
+          <span class="callout-icon">ℹ</span>
+          <span>Keep <code style="font-family:var(--mono);font-size:12px">vscars start</code> running in a terminal or tmux session. The connector maintains a secure WebSocket to the relay. Your machine must be on and connected.</span>
+        </div>
+        <div style="margin-top:16px">
+          <p style="font-size:13px;color:var(--t2);margin-bottom:8px">Optional: run as a background service</p>
+          <div class="code-block">
+            <span class="comment"># macOS (launchd)</span><br>
+            <span class="cmd">vscars service install &amp;&amp; vscars service start</span><br><br>
+            <span class="comment"># Linux (systemd)</span><br>
+            <span class="cmd">vscars service install --systemd &amp;&amp; sudo systemctl start vscars</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
+
+  <!-- ── FINAL CTA ── -->
+  <div class="final">
+    <h2>Ready to control your machine <span class="grad">from anywhere?</span></h2>
+    <p>Your account is free. Your machine stays yours. The server is just a relay.</p>
+    <div class="final-btns">
+      <a href="/app" class="btn-nav btn-grad" style="padding:12px 28px;font-size:15px">Open App →</a>
+      <a href="/static/install-connector.sh" class="btn-nav btn-outline" style="padding:12px 28px;font-size:15px">View install script</a>
+    </div>
+  </div>
+
 </div>
+
+<footer>
+  &copy; 2026 VSCARS. <a href="/" style="color:var(--t2)">Back to home</a>
+  &nbsp;·&nbsp;
+  <a href="/app" style="color:var(--t2)">Open App</a>
+</footer>
+
 <script>
-  (function () {
-    var el = document.getElementById('install-command');
-    if (!el) return;
-    el.textContent = 'curl -fsSL "' + window.location.origin + '/static/install-connector.sh" | bash';
-  })();
+(function(){
+  var origin = window.location.origin;
+  var cmd = document.getElementById('install-cmd');
+  if(cmd) cmd.textContent = 'curl -fsSL "' + origin + '/static/install-connector.sh" | bash';
+  var hint = document.getElementById('server-url-hint');
+  if(hint) hint.textContent = origin;
+})();
+
+function copyCode(id, btn) {
+  var el = document.getElementById(id);
+  if(!el) return;
+  navigator.clipboard.writeText(el.textContent.trim()).then(function(){
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(function(){ btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
 </script>
 </body>
 </html>

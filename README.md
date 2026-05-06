@@ -1,579 +1,403 @@
-# 🎮 VS Code Copilot Mobile Controller
+<div align="center">
 
-A **Python-based web application** that allows you to control VS Code and Copilot from any mobile device worldwide. Features role-based access control, QR code authentication, and remote access via Ngrok.
+<img src="https://img.shields.io/badge/VSCARS-VS%20Code%20As%20a%20Remote%20Service-7c3aed?style=for-the-badge&labelColor=070711" alt="VSCARS"/>
 
-## ✨ Features
+# VSCARS
 
-### Core Features
-- **🔐 Multi-User Authentication** - Register, login, JWT tokens
-- **📱 Mobile Web Interface** - Beautiful responsive UI for mobile devices
-- **🔑 Role-Based Access Control** - Superuser + Regular users with granular permissions
-- **🌍 Remote Access** - Control VS Code from anywhere using Ngrok
-- **📁 File Management** - Open, create, edit, delete files remotely
-- **⚡ Command Execution** - Run shell commands from your phone
-- **💬 Copilot Integration** - Ask Copilot directly from mobile
-- **🛡️ Security** - JWT authentication, password hashing, permission system
+### VS Code As a Remote Service
 
-### Authentication Methods
-1. **Direct Registration** - Username/password signup with superuser detection
-2. **QR Code Access** - Request access via QR code, superuser approves
-3. **Access Control** - Superuser grants specific permissions to users
+**Your dev machine in your pocket.** Run commands, edit files, chat with AI, and ship code — from any phone, tablet, or browser, anywhere on the planet.
 
-### Permission System
-- **View Files** - Browse and read files (all authenticated users)
-- **Edit Files** - Create, modify, delete files (requires permission)
-- **Run Commands** - Execute shell commands (requires permission)
-- **Run Copilot** - Access Copilot Chat (requires permission)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-7c3aed?style=flat-square)](https://www.python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.135-06b6d4?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com)
+[![License MIT](https://img.shields.io/badge/license-MIT-f59e0b?style=flat-square)](LICENSE)
+[![Stripe](https://img.shields.io/badge/billing-Stripe-635bff?style=flat-square&logo=stripe)](https://stripe.com)
 
-## Installation
+[**Landing Page**](https://vscars.latenightstack.com) · [**Quick Start**](#quick-start) · [**Pricing**](#pricing) · [**Architecture**](#architecture) · [**FAQ**](#faq)
 
-### Prerequisites
-- Python 3.8+
-- VS Code (installed and in PATH)
-- pip or poetry
-- Ngrok account (optional, for remote access)
-
-### Setup
-
-1. **Navigate to project**
-   ```bash
-   cd "LLM redefined"
-   ```
-
-2. **Create virtual environment** (recommended)
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Configure environment**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your settings
-   ```
-
-## Usage
-
-### 1. Set Your Superuser Device ID
-
-Edit `.env`:
-```env
-SUPERUSER_PHONE=iPhone-12-XXX  # Your phone's device ID (used during registration)
-```
-
-### 2. Start the Server
-
-```bash
-python main.py
-```
-
-You'll see:
-```
-============================================================
-🎮 VS Code Copilot Mobile Controller
-============================================================
-📍 Server: http://0.0.0.0:8000
-🌐 API: http://0.0.0.0:8000/api
-💻 Web UI: http://0.0.0.0:8000
-============================================================
-```
-
-### 3. Access the Web Interface
-
-- **Local Network**: `http://localhost:8000`
-- **From Phone on Same Network**: `http://<your-pc-ip>:8000`
-
-### 4. Set Up Remote Access with Ngrok
-
-**Get Ngrok token:**
-1. Sign up at [ngrok.com](https://ngrok.com)
-2. Get your auth token from dashboard
-3. Update `.env`:
-   ```env
-   NGROK_ENABLED=true
-   NGROK_AUTH_TOKEN=your_token_here
-   ```
-
-4. Restart the server - you'll get a public URL to use worldwide!
-
-## Architecture
-
-```
-project/
-├── app/
-│   ├── main.py           # FastAPI application
-│   ├── config.py         # Configuration management
-│   ├── database.py       # SQLAlchemy models
-│   ├── schemas.py        # Pydantic schemas
-│   ├── auth.py          # Authentication & JWT
-│   ├── tools.py         # VS Code tools
-│   ├── utils/
-│   │   ├── qr_code.py   # QR code generation
-│   │   └── ngrok_helper.py  # Ngrok integration
-│   └── __init__.py
-├── static/
-│   ├── index.html       # Web interface
-│   ├── style.css        # Styling
-│   └── script.js        # Frontend logic
-├── main.py              # Entry point
-├── requirements.txt     # Dependencies
-├── .env                 # Environment variables
-└── README.md
-```
-
-## Authentication Flow
-
-### Flow 1: Direct Registration (First Superuser)
-```
-1. Mobile Browser → Registration page
-2. Enter: username, email, password, device_id
-3. Device ID matches SUPERUSER_PHONE? → Registered as SUPERUSER
-4. Get JWT token
-5. Access ALL features
-```
-
-### Flow 2: Direct Registration (Regular User)
-```
-1. Mobile Browser → Registration page
-2. Enter: username, email, password, device_id  
-3. Device ID doesn't match SUPERUSER → Regular user
-4. Get JWT token
-5. Can only VIEW files initially
-6. Superuser must grant permissions
-```
-
-### Flow 3: QR Code Access Request
-```
-1. Regular user → "QR Access" tab
-2. Enter: username, email, device_id
-3. System generates QR code
-4. Superuser scans QR code with PC
-5. Superuser approves/rejects in Admin Panel
-6. User gains requested permissions
-```
-
-## API Endpoints
-
-### Authentication
-```http
-POST /api/auth/register
-POST /api/auth/login
-GET /api/auth/me
-```
-
-### Tools (File & Command Operations)
-```http
-GET /api/tools                    # List available tools
-POST /api/tools/execute           # Execute a tool
-```
-
-### Access Management
-```http
-POST /api/access/request-via-qr   # Request access with QR
-GET /api/access/pending-requests  # Get pending requests [SUPERUSER]
-POST /api/access/approve/{id}     # Approve request [SUPERUSER]
-POST /api/access/reject/{id}      # Reject request [SUPERUSER]
-```
-
-### Permissions
-```http
-GET /api/permissions/{user_id}    # Get user permissions [SUPERUSER]
-PUT /api/permissions/{user_id}    # Update permissions [SUPERUSER]
-```
-
-### System
-```http
-GET /api/health                   # Health check
-GET /api/ngrok/url               # Get public URL [SUPERUSER]
-```
-
-## API Usage Examples
-
-### Register as Superuser
-```bash
-curl -X POST http://localhost:8000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "admin",
-    "email": "admin@example.com",
-    "password": "secure123",
-    "device_id": "iPhone-12-XXX"
-  }'
-```
-
-### Login
-```bash
-curl -X POST http://localhost:8000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "admin",
-    "password": "secure123",
-    "device_id": "iPhone-12-XXX"
-  }'
-```
-
-### Execute Tool (Create File)
-```bash
-curl -X POST http://localhost:8000/api/tools/execute \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -d '{
-    "tool": "create_file",
-    "filepath": "/Users/username/test.txt",
-    "content": "Hello from mobile!"
-  }'
-```
-
-### Run Command
-```bash
-curl -X POST http://localhost:8000/api/tools/execute \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -d '{
-    "tool": "run_command",
-    "command": "npm run build",
-    "cwd": "/path/to/project"
-  }'
-```
-
-### Ask Copilot
-```bash
-curl -X POST http://localhost:8000/api/tools/execute \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -d '{
-    "tool": "ask_copilot",
-    "query": "How do I create a React component?"
-  }'
-```
-
-## Available Tools
-
-| Tool | Permission | Description |
-|------|-----------|-------------|
-| `open_file` | view | Open file in VS Code at specific line |
-| `create_file` | edit | Create new file with content |
-| `edit_file` | edit | Replace text in file |
-| `delete_file` | edit | Delete a file |
-| `read_file` | view | Read file contents |
-| `run_command` | commands | Execute shell command |
-| `list_files` | view | List directory contents |
-| `ask_copilot` | copilot | Open Copilot Chat with query |
-
-## Web Interface Guide
-
-### Dashboard
-- Quick actions (Open, Run, Chat)
-- Your permissions status
-- Remote access URL (if Ngrok enabled)
-
-### Tools
-- Visual grid of all available tools
-- Click any tool to execute
-- See permission requirements
-
-### File Browser
-- Browse directories
-- Click files to open/edit
-- Full file path support
-
-### Admin Panel (Superuser Only)
-- View pending QR access requests
-- See QR code to scan
-- Approve/reject access requests
-- Manage user permissions
-- Grant capabilities to users
-
-## Configuration
-
-### .env File Reference
-
-```env
-# Server
-HOST=0.0.0.0              # Bind address
-PORT=8000                 # Port number
-
-# Database
-DATABASE_URL=sqlite:///./vs_code_controller.db
-
-# JWT
-SECRET_KEY=your-secret    # Change this!
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
-
-# Ngrok
-NGROK_ENABLED=false       # Enable/disable
-NGROK_AUTH_TOKEN=         # Your token
-
-# Superuser
-SUPERUSER_PHONE=iPhone-12-XXX  # Your device ID
-```
-
-## Security Setup
-
-### Important: Change Secret Key
-Edit `.env`:
-```env
-SECRET_KEY=your-super-secret-key-here-change-this
-```
-
-### Optional: Authentication Middleware
-Add to `app/main.py` for additional security:
-
-```python
-from fastapi.middleware.cors import CORSMiddleware
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:8000"],  # Restrict origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-```
-
-### Rate Limiting (Future Enhancement)
-```python
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-```
-
-## Development
-
-### Run in Development Mode
-```bash
-python main.py
-```
-
-### Auto-reload with Uvicorn
-```bash
-uvicorn app.main:app --reload --port 8000
-```
-
-### Database Inspection
-```bash
-# View SQLite database
-sqlite3 vs_code_controller.db
-
-# View users
-SELECT * FROM users;
-
-# View permissions
-SELECT * FROM user_permissions;
-
-# View access requests
-SELECT * FROM access_requests;
-```
-
-### Enable Debug Mode
-```bash
-DEBUG=true python main.py
-```
-
-## Mobile Client Examples
-
-### iOS via Shortcuts
-```
-1. Create new Shortcut
-2. HTTP POST to: https://your-url/api/tools/execute
-3. Headers: {"Authorization": "Bearer TOKEN"}
-4. Body: {"tool": "run_command", "command": "npm start"}
-```
-
-### Android via Tasker
-```
-1. Create Task
-2. HTTP POST
-3. URL: https://your-url/api/tools/execute
-4. Headers: Authorization: Bearer TOKEN
-5. Body: JSON with tool and parameters
-```
-
-### Python Script (from anywhere)
-```python
-import requests
-
-TOKEN = "your_jwt_token_here"
-BASE_URL = "https://your-public-url"  # From Ngrok
-
-headers = {"Authorization": f"Bearer {TOKEN}"}
-
-# Run command
-response = requests.post(
-    f"{BASE_URL}/api/tools/execute",
-    json={
-        "tool": "run_command",
-        "command": "npm run build"
-    },
-    headers=headers
-)
-
-print(response.json())
-```
-
-## Troubleshooting
-
-### Can't Connect to Server
-```bash
-# Check if server is running
-curl http://localhost:8000/api/health
-
-# Check firewall
-# macOS: System Preferences > Security & Privacy > Firewall
-# Windows: Windows Defender Firewall
-```
-
-### Device ID Issues
-- Device ID must be unique per device
-- Use: `iPhone-12-ABC123` or `Android-Samsung-S21` format
-- First registration with SUPERUSER_PHONE device_id = Superuser
-- Subsequent registrations = Regular user
-
-### JWT Token Expired
-- Tokens expire in 30 minutes (configurable in .env)
-- Login again to get new token
-- Browser automatically handles this
-
-### VS Code Command Not Found
-```bash
-# Ensure code command is available
-which code
-
-# If missing, add VS Code to PATH:
-# macOS: Command + Shift + P → "Shell Command: Install"
-```
-
-### Ngrok Issues
-- Free plan has time limits and bandwidth
-- Token may expire, Generate new token in dashboard
-- Check auth token is correct in .env
-
-## Advanced Topics
-
-### Custom Tool Integration
-Add new tools in `app/tools.py` VSCodeTools class:
-
-```python
-@staticmethod
-def my_custom_tool(filepath: str, option: str):
-    # Your implementation
-    return f"✅ Custom tool executed"
-```
-
-### Database Backup
-```bash
-cp vs_code_controller.db vs_code_controller.db.backup
-```
-
-### Reset Database
-```bash
-# Delete database file (careful!)
-rm vs_code_controller.db
-
-# Restart server to recreate
-python main.py
-```
-
-### Performance Optimization
-For Ngrok tunnels, consider:
-- Compression middleware
-- Request/response caching
-- Connection pooling
-
-## Frequently Asked Questions
-
-**Q: Can I limit file access to specific directories?**
-A: Yes, modify `app/tools.py` to add path validation:
-```python
-ALLOWED_PATHS = ["/Users/username/Documents"]
-
-@staticmethod
-def validate_path(filepath):
-    for allowed in ALLOWED_PATHS:
-        if filepath.startswith(allowed):
-            return True
-    raise PermissionError("Path not allowed")
-```
-
-**Q: How secure is this?**
-A: Very secure with proper setup:
-- HTTPS via Ngrok
-- JWT tokens with expiration
-- Password hashing with bcrypt
-- Permission-based access control
-- SQLAlchemy ORM prevents SQL injection
-
-**Q: Can I host this on a VPS instead of Ngrok?**
-A: Yes! Set up SSL/TLS and deploy to any server:
-```bash
-# Using Gunicorn on VPS
-gunicorn -w 4 -b 0.0.0.0:8000 app.main:app
-```
-
-**Q: What if I lose my superuser device ID?**
-A: Create new superuser by:
-1. Updating SUPERUSER_PHONE in .env
-2. Delete and recreate database: `rm vs_code_controller.db`
-3. Restart server and register again
-
-## Contributing
-
-Contributions welcome! Areas for improvement:
-- [ ] SSO integration (Google, GitHub)
-- [ ] Team/group permissions
-- [ ] Audit logging
-- [ ] WebSocket for real-time updates
-- [ ] File sync/backup features
-- [ ] Custom command templates
-
-## License
-
-MIT License - Feel free to use and modify
-
-## Support
-
-Issues or questions?
-- Check troubleshooting section
-- Review API documentation
-- Check logs: `python main.py` output
-- Ensure .env is configured correctly
-
-## Project Structure Summary
-
-**Backend (Python/FastAPI)**
-- User authentication & JWT
-- Permission management  
-- Tool execution
-- Database with SQLAlchemy
-- Ngrok integration
-
-**Frontend (HTML/CSS/JS)**
-- Responsive mobile UI
-- Real-time status updates
-- Tool execution forms
-- Admin panel
-- QR code scanning
-
-**Database (SQLite)**
-- Users & authentication
-- Permissions & access control
-- Access requests & QR codes
-- Secure password storage
-
-**Tools (VS Code Integration)**
-- File operations (CRUD)
-- Command execution
-- Copilot Chat integration
-- Directory browsing
+</div>
 
 ---
 
-**Made with ❤️ for mobile developers everywhere**
+## What is VSCARS?
+
+VSCARS is a **mobile-first remote bridge to your development machine**. It exposes a secure, permissioned web UI that lets you drive your local (or any registered) machine from anywhere — run builds, chat with Copilot, stage commits, browse files, and execute workflows without ever opening your laptop.
+
+Unlike SSH or VS Code Tunnels, VSCARS is built around three ideas:
+
+1. **Your machine stays yours.** Pro+ users run every tool on their **own** registered machine via the `vscars` CLI agent. Nothing executes on the relay server.
+2. **Permissions that respect seniority.** Role-based gates on file read, write, shell, and AI — tuned per user or per plan.
+3. **Mobile-grade UX.** Live-streaming command output, one-tap workflows, AI commit messages, and an onboarding wizard designed for thumbs.
+
+---
+
+## Why VSCARS?
+
+| | SSH / Tunnels | VS Code Web | **VSCARS** |
+|---|:-:|:-:|:-:|
+| Works from phone browser | ⚠️ clunky | ⚠️ desktop-focused | ✅ built for mobile |
+| Live streaming command output | ✅ | ✅ | ✅ WebSocket |
+| Role-based permissions | ❌ all-or-nothing | ❌ | ✅ 4 granular perms |
+| AI Copilot from mobile | ❌ | ⚠️ | ✅ multi-provider |
+| Runs tools on **your** machine (not server) | N/A | ❌ | ✅ CLI relay |
+| Idea capture + workflows + git panel | ❌ | ❌ | ✅ |
+| Self-hostable with license key | ❌ | ⚠️ | ✅ |
+
+---
+
+## Features
+
+### Core
+- 🎛️ **15 built-in tools** — open/create/edit/delete files, run commands, git ops, project scaffolding, browse directories
+- 🤖 **Copilot Agent** — run the real GitHub Copilot CLI agent (Claude Opus / GPT-5.x) in silent, non-interactive mode
+- 🧠 **Multi-provider AI chat** — GitHub Copilot, Claude (Anthropic), or OpenAI — auto-picks the first configured key
+- ⚡ **Live command streaming** — WebSocket-powered real-time stdout/stderr to your phone
+- 🌍 **Global access via Ngrok** — one-command tunnel to your machine, or deploy behind any reverse proxy
+
+### Productivity
+- 💡 **Idea Vault** — capture thoughts on the go, tag & mark done — `/api/ideas`
+- 🌿 **AI Git Panel** — status, diff, stage-all, AI commit messages, commit, push — `/api/git/*`
+- ⚡ **Saved Workflows** — name-and-save command shortcuts with icons — `/api/workflows`
+- ☀️ **Morning Brief** — dashboard widgets: commands today, pending ideas, workflow count — `/api/dashboard/brief`
+- 🔑 **Session management** — view and revoke active JWTs — `/api/auth/sessions`
+- ⊕ **FAB** — bottom-right floating quick-action button on mobile
+
+### Security & Billing
+- 🔐 **JWT auth + Argon2 passwords** — production-grade secrets, token revocation
+- 📧 **Password reset via email** (Resend) — full forgot-password flow with 1-hour signed tokens
+- 🛡️ **Command blocklist** — 15+ regex patterns block `rm -rf /`, fork bombs, `/etc/passwd` overwrites, etc.
+- 🔒 **Security headers** — CSP-ready, HSTS, X-Frame-Options, Referrer-Policy
+- 💳 **Stripe billing** — checkout, customer portal, webhook-driven plan sync
+- 🗝️ **License keys** — HMAC-SHA256 signed, offline-validatable for self-hosted tier
+
+---
+
+## Architecture
+
+VSCARS uses a **relay architecture**: the server is a coordinator, not an executor.
+
+```mermaid
+flowchart LR
+    Phone["📱 Phone / Browser"]
+    Relay["🌐 Relay Server<br/>FastAPI + WebSocket"]
+    CLI["💻 vscars CLI<br/>on YOUR machine"]
+    AI[("🤖 Copilot /<br/>Claude / OpenAI")]
+    Disk[("📁 Your Filesystem<br/>Terminal · Git · VS Code")]
+
+    Phone -->|HTTPS · JWT| Relay
+    Relay -->|WebSocket · API Key| CLI
+    Relay -.->|AI chat only| AI
+    CLI -->|executes locally| Disk
+```
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **Relay server** | `app/main.py` + `app/relay.py` | FastAPI app, auth, billing, WebSocket router |
+| **CLI agent** | `cli/vscars/` | `pip install`-able WebSocket client that executes tools locally |
+| **Web UI** | `static/` | Vanilla JS mobile-first PWA |
+| **Tools** | `app/tools.py` | 15 tool handlers + multi-provider AI chat |
+| **Billing** | `app/billing/` | Stripe checkout, portal, license key generator |
+
+**Free users** get AI chat only — zero filesystem, terminal, or git access. **Pro+ users** register a machine with `vscars init`, and every tool call proxies through the WebSocket relay to their own machine. **Superusers** (the relay owner) still execute locally — because they're controlling the server's own host.
+
+---
+
+## Pricing
+
+| | **Free** | **Pro** | **Team** | **Self-Hosted** |
+|---|:-:|:-:|:-:|:-:|
+| Price | $0 | **$9/mo** | **$29/mo** | **$19/mo** or **$49 lifetime** |
+| Daily API calls | 50 | 1,000 | unlimited | unlimited |
+| AI chat (Copilot/Claude/OpenAI) | ✅ | ✅ | ✅ | ✅ |
+| Run tools on your machine | ❌ | ✅ | ✅ | ✅ |
+| Shell, git, file edit | ❌ | ✅ | ✅ | ✅ |
+| Multi-machine | ❌ | 1 | unlimited | unlimited |
+| Own your relay server | ❌ | ❌ | ❌ | ✅ |
+| License key | — | — | — | HMAC-signed, offline-valid |
+
+Free users never touch the host filesystem — by design. That's what unlocks the "safely hostable SaaS" model.
+
+---
+
+## Quick Start
+
+### 1. Clone & Install
+
+```bash
+git clone https://github.com/latenightstack/vscars.git
+cd vscars
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2. Configure `.env`
+
+```bash
+cp .env.example .env
+# Required:  SECRET_KEY (auto-generated if blank) · SUPERUSER_PHONE
+# Optional:  GITHUB_TOKEN · ANTHROPIC_API_KEY · OPENAI_API_KEY
+# Billing:   STRIPE_SECRET_KEY · STRIPE_PRICE_* · LICENSE_SIGNING_KEY
+# Email:     RESEND_API_KEY · FROM_EMAIL
+```
+
+### 3. Launch
+
+```bash
+python main.py
+```
+
+```text
+╔══════════════════════════════════════════╗
+║   VSCARS — VS Code As a Remote Service   ║
+╠══════════════════════════════════════════╣
+║   Server:    http://0.0.0.0:8000         ║
+║   API:       http://0.0.0.0:8000/api     ║
+║   App:       http://0.0.0.0:8000/app     ║
+╚══════════════════════════════════════════╝
+```
+
+Open **`http://localhost:8000`** — you'll see the landing page. Click **Open App** → register (first user becomes superuser) → follow the 3-step onboarding wizard.
+
+### 4. Connect Your Machine (Pro+)
+
+On the machine you want to control remotely:
+
+```bash
+pip install git+https://github.com/latenightstack/vscars.git#subdirectory=cli
+vscars init --api-key vscars_<your_key>
+vscars start
+```
+
+Your machine now appears in the **Machines** tab. All tools will proxy to it over WebSocket.
+
+---
+
+## API Reference
+
+### Auth
+```http
+POST   /api/auth/register            Create account (first user = superuser)
+POST   /api/auth/login               Returns JWT
+GET    /api/auth/me                  Current user + plan + usage
+POST   /api/auth/logout              Revoke current token
+POST   /api/auth/forgot-password     Trigger reset email
+POST   /api/auth/reset-password      Consume reset token
+GET    /api/auth/sessions            List active sessions
+POST   /api/auth/api-key/generate    Mint a CLI key (shown once)
+```
+
+### Tools & Execution
+```http
+GET    /api/tools                    List available tools
+POST   /api/tools/execute            Run a tool (proxies to machine for Pro+)
+GET    /api/tools/history            Command log
+GET    /api/tools/conversations      AI chat history
+WS     /ws/stream?token=...          Live streaming command output
+WS     /ws/agent/{machine_token}     CLI agent connection
+```
+
+### Productivity
+```http
+GET/POST/PUT/DELETE /api/ideas       Idea Vault CRUD
+GET/POST/DELETE     /api/workflows   Saved Workflows
+POST /api/workflows/{id}/run
+GET  /api/git/status                 Git state
+POST /api/git/commit                 AI-assisted commit
+GET  /api/dashboard/brief
+```
+
+### Machines
+```http
+POST   /api/machines/register        Called by `vscars init`
+GET    /api/machines                 List + connection status
+DELETE /api/machines/{machine_id}
+```
+
+### Billing
+```http
+GET    /api/billing/status                   Current plan + usage
+POST   /api/billing/checkout                 Stripe Checkout URL
+GET    /api/billing/portal                   Stripe Billing Portal
+POST   /api/billing/webhook                  Stripe webhooks (raw body)
+POST   /api/billing/validate-license         Activate self-hosted key
+POST   /api/billing/admin/generate-license   [SUPERUSER]
+```
+
+### Admin
+```http
+POST /api/access/request-via-qr
+GET  /api/access/pending-requests    [SUPERUSER]
+POST /api/access/approve/{id}        [SUPERUSER]
+GET  /api/permissions/{user_id}      [SUPERUSER]
+PUT  /api/permissions/{user_id}      [SUPERUSER]
+```
+
+---
+
+## Built-in Tools
+
+| Tool | Permission | Description |
+|------|:---:|-------------|
+| `open_file` | view | Open file in VS Code at a line |
+| `read_file` | view | Return file contents |
+| `list_files` | view | Directory listing |
+| `browse_directory` | view | Tree browser with project detection |
+| `git_status` | view | Branch + staged/unstaged summary |
+| `get_workspace_info` | view | Tool versions + disk + workspace |
+| `create_file` | edit | Create new file |
+| `edit_file` | edit | Replace text in a file |
+| `delete_file` | edit | Delete a file |
+| `create_project` | edit | Scaffold python/node/react/flask/fastapi |
+| `run_command` | commands | Shell exec (sandboxed + blocklist) |
+| `git_command` | commands | Run git commands |
+| `open_terminal` | commands | Open Terminal at a path |
+| `ask_copilot` | copilot | Query GitHub Models (GPT-4o) |
+| `ask_ai` | copilot | **Multi-provider**: Copilot / Claude / OpenAI auto-routing |
+| `copilot_agent` | copilot | Run Copilot CLI agent (silent, `--allow-all`) |
+
+---
+
+## Tech Stack
+
+**Backend** · FastAPI · SQLAlchemy · SQLite (swap for Postgres in prod) · JWT + Argon2 · slowapi rate-limiting · Stripe SDK · Resend email · pyngrok
+
+**Frontend** · Vanilla JS (no build step) · CSS custom properties · PWA manifest · Service Worker ready · WebSocket streaming
+
+**CLI** · Python 3.9+ · `websockets` · local executor mirroring `tools.py` · auto-reconnect · config at `~/.vscars/config.json`
+
+---
+
+## Project Structure
+
+```
+vscars/
+├── app/
+│   ├── main.py              FastAPI app, WebSocket, security headers
+│   ├── auth.py              JWT, Argon2, token revocation
+│   ├── database.py          12+ SQLAlchemy models, auto-migration
+│   ├── schemas.py           Pydantic request/response models
+│   ├── config.py            env loading + auto-secret generation
+│   ├── tools.py             15 tool handlers + multi-provider AI
+│   ├── relay.py             WebSocket relay (server ↔ CLI)
+│   ├── trust.py             Device trust scoring
+│   ├── git_ops.py           Git wrappers (no shell=True)
+│   ├── email.py             Resend integration (welcome, reset, license)
+│   ├── billing/
+│   │   ├── plan_limits.py   PLAN_LIMITS · enforce_plan_limits · apply_plan_to_permissions
+│   │   ├── license.py       HMAC-SHA256 license keys
+│   │   ├── stripe_client.py Checkout, portal, webhook validation
+│   │   └── routes.py        /api/billing/*
+│   └── utils/
+│       ├── qr_code.py
+│       └── ngrok_helper.py
+├── cli/                     `vscars` pip package
+│   ├── setup.py
+│   └── vscars/
+│       ├── agent.py         WebSocket client
+│       ├── executor.py      Local tool executor
+│       └── config.py        ~/.vscars/config.json
+├── static/
+│   ├── landing.html         Marketing page (purple→cyan)
+│   ├── index.html           App shell
+│   ├── style.css            Design system v11.0
+│   └── script.js            All frontend logic
+├── deploy/                  nginx.conf · systemd unit · deploy.sh
+├── main.py                  Entry point → uvicorn
+├── requirements.txt
+└── .env                     Config (gitignored)
+```
+
+---
+
+## Security
+
+VSCARS treats remote shell access as the high-stakes surface it is:
+
+- 🔐 **Argon2id** password hashing (no 72-byte bcrypt limit)
+- 🎫 **JWT** with per-token JTI for revocation; logout actually revokes
+- 🛡️ **Security headers** — `X-Frame-Options: DENY`, HSTS (when `FORCE_HTTPS=true`), nosniff, Referrer-Policy
+- 🚫 **Command blocklist** — regex-filtered in `run_command` AND the WebSocket stream endpoint
+- 🧱 **Path sandbox** — every tool call resolves paths against the workspace root; `..` traversal blocked
+- 📜 **Rate limiting** — 5/min on login, 3/min on password reset, 30/min on API
+- 🔑 **License keys** — offline HMAC verification; no phone-home required
+- 📊 **Activity log** — every tool execution stored in `command_logs` with status + params
+
+**Responsible disclosure:** security@latenightstack.com
+
+---
+
+## FAQ
+
+<details>
+<summary><b>Does my laptop have to be on?</b></summary>
+
+For Pro+ tools (shell, git, file edit), yes — the `vscars` CLI runs on your machine and the relay proxies to it. Free AI chat works without any machine.
+</details>
+
+<details>
+<summary><b>Is it safe to expose my machine to the internet?</b></summary>
+
+Safer than SSH if used correctly. All traffic is over HTTPS (Ngrok or your own TLS), authenticated with rotating JWTs, and every dangerous command pattern is blocked before exec. Don't run the server as root, don't disable the blocklist, rotate API keys. For maximum security, use the Self-Hosted tier behind a VPN.
+</details>
+
+<details>
+<summary><b>Do I need GitHub Copilot?</b></summary>
+
+No. VSCARS supports **GitHub Copilot**, **Claude** (Anthropic), and **OpenAI** directly — whichever API key you set wins. The `ask_ai` tool auto-picks the first available provider.
+</details>
+
+<details>
+<summary><b>SaaS vs Self-Hosted — which is better?</b></summary>
+
+**SaaS** is zero-config: sign up, install the CLI, done. **Self-Hosted** gives you your own relay — nothing leaves your infrastructure. License keys are HMAC-signed so they work offline forever.
+</details>
+
+<details>
+<summary><b>Can I use this with my existing VS Code setup?</b></summary>
+
+Yes. VSCARS is a bridge, not a replacement. Your local VS Code keeps running exactly as before — VSCARS just gives you a mobile remote control.
+</details>
+
+<details>
+<summary><b>What happens if I hit my daily API limit?</b></summary>
+
+The app returns HTTP 429 with an upgrade modal. Your machine connection stays open; only AI/tool calls are gated. Limits reset at UTC midnight.
+</details>
+
+---
+
+## Roadmap
+
+- [ ] Native iOS + Android apps (PWA today)
+- [ ] Postgres migration path (SQLite fine for self-hosted)
+- [ ] Team workspaces with shared workflows
+- [ ] Audit log export (SOC 2 prep)
+- [ ] Webhook integrations (Slack, Discord on command complete)
+- [ ] SSO (Google, GitHub, Okta)
+- [ ] Electron wrapper for desktop
+
+---
+
+## Contributing
+
+PRs welcome. Good first issues are labeled [`good-first-issue`](https://github.com/latenightstack/vscars/labels/good-first-issue). Before submitting:
+
+```bash
+ruff check app/ cli/
+mypy app/
+python -c "from app.main import app; print('✓ imports ok')"
+```
+
+---
+
+## License
+
+MIT © 2026 Late Night Stack. See [LICENSE](LICENSE).
+
+---
+
+<div align="center">
+
+**Built for developers who refuse to wait until they're back at their desk.**
+
+</div>

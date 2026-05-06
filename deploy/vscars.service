@@ -1,0 +1,50 @@
+# VSCARS systemd service — EC2 + Cloudflare Tunnel (no nginx)
+#
+# Setup:
+#   sudo cp vscars.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable vscars
+#   sudo systemctl start vscars
+#
+# Logs:   journalctl -u vscars -f
+# Status: sudo systemctl status vscars
+
+[Unit]
+Description=VSCARS relay server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/vscars
+
+# uvicorn direct — Cloudflare Tunnel handles SSL + routing
+# On free-tier t2.micro, 1 worker is fine; bump to 2 on t2.small
+ExecStart=/opt/vscars/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 1 \
+    --loop uvloop \
+    --log-level info
+
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+EnvironmentFile=/etc/vscars/vscars.env
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/vscars /var/lib/vscars
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vscars
+
+[Install]
+WantedBy=multi-user.target

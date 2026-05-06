@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VS Code Copilot Mobile Controller
+VSCARS — VS Code As a Remote Service
 A Python-based MCP server with web interface for controlling VS Code from mobile
 """
 
@@ -20,7 +20,7 @@ def main():
     """Main entry point"""
     
     print("\n" + "="*60)
-    print("🎮 VS Code Copilot Mobile Controller")
+    print("🚀 VSCARS — VS Code As a Remote Service")
     print("="*60)
     print(f"📍 Server: http://{HOST}:{PORT}")
     print(f"🌐 API: http://{HOST}:{PORT}/api")

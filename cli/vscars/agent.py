@@ -16,8 +16,9 @@ from pathlib import Path
 
 try:
     import websockets
+    from websockets.exceptions import ConnectionClosed
 except ImportError:
-    print("❌ Missing dependency: pip install websockets")
+    print("❌ Missing dependency: pip install 'websockets>=12.0'")
     sys.exit(1)
 
 from vscars import config as cfg
@@ -25,73 +26,93 @@ from vscars import executor
 
 log = logging.getLogger("vscars.agent")
 
-PING_INTERVAL = 25  # seconds
-RECONNECT_DELAY = 5  # seconds between reconnect attempts
+PING_INTERVAL = 25       # seconds between keepalive pings
+RECONNECT_DELAY_MIN = 3  # start backing off at 3s
+RECONNECT_DELAY_MAX = 60 # cap at 60s
 
 
 async def run_agent(server_url: str, token: str, machine_id: str, name: str):
-    ws_url = server_url.rstrip("/").replace("http://", "ws://").replace("https://", "wss://")
+    ws_url = (
+        server_url.rstrip("/")
+        .replace("http://", "ws://")
+        .replace("https://", "wss://")
+    )
     ws_url = f"{ws_url}/ws/agent/{token}"
 
-    log.info("Connecting to %s …", ws_url.replace(token, token[:8] + "…"))
+    short_token = token[:8] + "…"
+    log.info("Connecting to relay: %s", ws_url.replace(token, short_token))
 
-    async with websockets.connect(
-        ws_url,
-        ping_interval=PING_INTERVAL,
-        ping_timeout=10,
-        close_timeout=5,
-    ) as ws:
-        msg = await ws.recv()
-        data = json.loads(msg)
+    async with websockets.connect(ws_url, open_timeout=15, close_timeout=5) as ws:
+        # First message should be the welcome frame
+        raw = await asyncio.wait_for(ws.recv(), timeout=15)
+        data = json.loads(raw)
         if data.get("type") == "connected":
-            log.info("✅ Connected — machine '%s' is online", data.get("name", name))
-            print(f"✅ VSCARS agent connected: {data.get('name', name)}")
-            print("   Waiting for tool calls… (Ctrl+C to stop)")
+            machine_name = data.get("name", name)
+            log.info("✅ Connected — machine '%s' is online", machine_name)
+            print(f"✅ Connected: {machine_name}")
+            print("   Relay is live. Waiting for commands from the app… (Ctrl+C to stop)")
+        else:
+            log.warning("Unexpected first message: %s", data)
 
-        async def send_ping():
+        # Background keepalive ping loop
+        async def ping_loop():
             while True:
                 await asyncio.sleep(PING_INTERVAL)
                 try:
                     await ws.send(json.dumps({"type": "ping"}))
                 except Exception:
-                    break
+                    return  # connection gone — outer loop will reconnect
 
-        asyncio.ensure_future(send_ping())
+        asyncio.ensure_future(ping_loop())
 
+        # Main message loop
         async for raw in ws:
             try:
                 msg = json.loads(raw)
             except Exception:
                 continue
 
-            if msg.get("type") == "pong":
+            msg_type = msg.get("type")
+
+            if msg_type == "pong":
                 continue
 
-            if msg.get("type") == "tool_call":
+            if msg_type == "tool_call":
                 call_id = msg.get("call_id")
                 tool_name = msg.get("tool")
                 params = msg.get("params", {})
-                log.info("→ tool_call %s %s", tool_name, call_id)
+                log.info("→ tool_call %s  id=%s", tool_name, call_id)
 
                 result = executor.execute(tool_name, params)
                 result["call_id"] = call_id
                 result["type"] = "tool_result"
 
                 await ws.send(json.dumps(result))
-                log.info("← result %s success=%s", call_id, result.get("success"))
+                log.info("← result  id=%s  success=%s", call_id, result.get("success"))
 
 
 async def _run_with_reconnect(server_url: str, token: str, machine_id: str, name: str):
+    delay = RECONNECT_DELAY_MIN
     while True:
         try:
             await run_agent(server_url, token, machine_id, name)
-        except KeyboardInterrupt:
-            print("\nStopped.")
+            # clean exit (e.g. KeyboardInterrupt caught inside run_agent)
             break
+        except KeyboardInterrupt:
+            print("\n👋 Stopped.")
+            break
+        except ConnectionClosed as e:
+            log.warning("Connection closed: %s — reconnecting in %ds", e, delay)
+            print(f"⚠  Connection closed. Reconnecting in {delay}s…")
+        except OSError as e:
+            log.warning("Network error: %s — reconnecting in %ds", e, delay)
+            print(f"⚠  Network error ({e}). Reconnecting in {delay}s…")
         except Exception as e:
-            log.warning("Disconnected: %s — reconnecting in %ds", e, RECONNECT_DELAY)
-            print(f"⚠️  Disconnected ({e}). Reconnecting in {RECONNECT_DELAY}s…")
-            await asyncio.sleep(RECONNECT_DELAY)
+            log.warning("Unexpected error: %s — reconnecting in %ds", e, delay)
+            print(f"⚠  Error: {e}. Reconnecting in {delay}s…")
+
+        await asyncio.sleep(delay)
+        delay = min(delay * 2, RECONNECT_DELAY_MAX)  # exponential backoff
 
 
 def start():
@@ -101,24 +122,27 @@ def start():
         sys.exit(1)
 
     c = cfg.load()
-    server_url = c["server_url"]
-    token = c["machine_token"]
-    machine_id = c["machine_id"]
+    server_url = c.get("server_url")
+    token = c.get("machine_token")
+    machine_id = c.get("machine_id")
     name = c.get("machine_name", platform.node())
 
-    log_path = cfg.LOG_FILE
-    cfg.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    if not server_url or not token or not machine_id:
+        print("❌ Config is incomplete. Run `vscars init` again.")
+        sys.exit(1)
 
+    # Set up logging — both file and stdout
+    cfg.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
         handlers=[
-            logging.FileHandler(log_path),
+            logging.FileHandler(cfg.LOG_FILE),
             logging.StreamHandler(sys.stdout),
         ],
     )
 
-    # Write PID file
+    # Write PID so `vscars stop` can find us
     cfg.PID_FILE.write_text(str(os.getpid()))
 
     def _cleanup(sig, frame):
@@ -128,6 +152,11 @@ def start():
 
     signal.signal(signal.SIGINT, _cleanup)
     signal.signal(signal.SIGTERM, _cleanup)
+
+    print(f"VSCARS agent starting — server: {server_url}")
+    print(f"Machine: {name} ({machine_id[:8]}…)")
+    print(f"Logs: {cfg.LOG_FILE}")
+    print()
 
     try:
         asyncio.run(_run_with_reconnect(server_url, token, machine_id, name))
