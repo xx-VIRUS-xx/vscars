@@ -1269,34 +1269,10 @@ class VSCodeTools:
 # Tool definitions
 TOOLS = [
     {
-        "name": "open_file",
-        "description": "Open a file in VS Code",
-        "required_permission": "view",
-        "handler": VSCodeTools.open_file
-    },
-    {
         "name": "open_project",
         "description": "Open a project folder in VS Code",
         "required_permission": "view",
         "handler": VSCodeTools.open_project
-    },
-    {
-        "name": "create_file",
-        "description": "Create a new file with content",
-        "required_permission": "edit",
-        "handler": VSCodeTools.create_file
-    },
-    {
-        "name": "edit_file",
-        "description": "Edit file by replacing text",
-        "required_permission": "edit",
-        "handler": VSCodeTools.edit_file
-    },
-    {
-        "name": "delete_file",
-        "description": "Delete a file",
-        "required_permission": "edit",
-        "handler": VSCodeTools.delete_file
     },
     {
         "name": "read_file",
@@ -1333,18 +1309,6 @@ TOOLS = [
         "description": "Run git commands (add, commit, push...)",
         "required_permission": "commands",
         "handler": VSCodeTools.git_command
-    },
-    {
-        "name": "create_project",
-        "description": "Create project (python/node/react/flask/fastapi)",
-        "required_permission": "edit",
-        "handler": VSCodeTools.create_project
-    },
-    {
-        "name": "open_terminal",
-        "description": "Open terminal at a path",
-        "required_permission": "commands",
-        "handler": VSCodeTools.open_terminal
     },
     {
         "name": "get_workspace_info",

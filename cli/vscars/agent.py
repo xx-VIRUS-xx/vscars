@@ -24,11 +24,72 @@ except ImportError:
 from vscars import config as cfg
 from vscars import executor
 
+try:
+    import requests as _requests
+except ImportError:
+    _requests = None
+
 log = logging.getLogger("vscars.agent")
 
 PING_INTERVAL = 25       # seconds between keepalive pings
 RECONNECT_DELAY_MIN = 3  # start backing off at 3s
 RECONNECT_DELAY_MAX = 60 # cap at 60s
+
+
+def _autodetect() -> dict:
+    """Detect workspace, git repos, and available agents on this machine."""
+    import subprocess, shutil
+
+    workspace = executor._get_workspace()
+
+    # Find git repos under workspace (max depth 3)
+    git_repos = []
+    try:
+        for root, dirs, files in os.walk(workspace):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            level = root.replace(workspace, "").count(os.sep)
+            if level > 2:
+                dirs.clear()
+                continue
+            if ".git" in dirs or ".git" in files:
+                git_repos.append(root)
+                if len(git_repos) >= 10:
+                    break
+    except Exception:
+        pass
+
+    # Detect available agents/tools
+    agents = []
+    for tool in ["claude", "gh", "git", "node", "python3", "python", "pip", "npm", "code"]:
+        if shutil.which(tool):
+            agents.append(tool)
+
+    return {
+        "workspace": workspace,
+        "git_repos": git_repos,
+        "agents": agents,
+        "cwd": os.getcwd(),
+        "home": os.path.expanduser("~"),
+    }
+
+
+def _post_autodetect(server_url: str, api_key: str, machine_id: str, os_info: str):
+    if not _requests:
+        return
+    try:
+        payload = {
+            "machine_id": machine_id,
+            "os_info": os_info,
+            "autodetect": _autodetect(),
+        }
+        _requests.post(
+            f"{server_url.rstrip('/')}/api/machines/autodetect",
+            json=payload,
+            headers={"X-VSCARS-Key": api_key},
+            timeout=10,
+        )
+    except Exception:
+        pass
 
 
 async def run_agent(server_url: str, token: str, machine_id: str, name: str):
@@ -51,6 +112,13 @@ async def run_agent(server_url: str, token: str, machine_id: str, name: str):
             log.info("✅ Connected — machine '%s' is online", machine_name)
             print(f"✅ Connected: {machine_name}")
             print("   Relay is live. Waiting for commands from the app… (Ctrl+C to stop)")
+            # Post autodetect info in background thread so it doesn't block the event loop
+            c = cfg.load()
+            api_key = c.get("api_key", "")
+            os_info = f"{platform.system()} {platform.release()}"
+            asyncio.get_event_loop().run_in_executor(
+                None, _post_autodetect, server_url, api_key, machine_id, os_info
+            )
         else:
             log.warning("Unexpected first message: %s", data)
 
@@ -83,7 +151,9 @@ async def run_agent(server_url: str, token: str, machine_id: str, name: str):
                 params = msg.get("params", {})
                 log.info("→ tool_call %s  id=%s", tool_name, call_id)
 
-                result = executor.execute(tool_name, params)
+                # Run executor in a thread so the async loop (keepalive pings) stays alive
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, executor.execute, tool_name, params)
                 result["call_id"] = call_id
                 result["type"] = "tool_result"
 

@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 
 DEFAULT_POLICY = {
     "profile": "balanced",            # safe | balanced | power
-    "require_approval": True,
+    "require_approval": False,
     "block_destructive": True,
     "allow_network": True,
     "kill_switch": False,
@@ -65,7 +65,7 @@ def normalize_policy_row(policy_row) -> dict:
         return dict(DEFAULT_POLICY)
     return {
         "profile": policy_row.profile or "balanced",
-        "require_approval": _as_bool(policy_row.require_approval, True),
+        "require_approval": _as_bool(policy_row.require_approval, False),
         "block_destructive": _as_bool(policy_row.block_destructive, True),
         "allow_network": _as_bool(policy_row.allow_network, True),
         "kill_switch": _as_bool(policy_row.kill_switch, False),
@@ -96,7 +96,7 @@ def apply_profile_defaults(policy: dict) -> dict:
     else:
         merged.update({
             "profile": "balanced",
-            "require_approval": True,
+            "require_approval": False,
             "block_destructive": True,
             "allow_network": True,
             "kill_switch": False,

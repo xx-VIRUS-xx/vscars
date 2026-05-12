@@ -7,16 +7,16 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 import asyncio
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
-from app.database import init_db, get_db, SessionLocal, User, UserPermission, AccessRequest, CommandLog, ConversationHistory, PasswordResetToken, IdeaNote, SavedWorkflow, UserSession, RegisteredMachine, TrustPolicy, ToolApproval, ScrumItem, AgentTask, AgentSession, AgentSessionMessage
+from app.database import init_db, get_db, SessionLocal, User, UserPermission, CommandLog, ConversationHistory, PasswordResetToken, IdeaNote, UserSession, RegisteredMachine, TrustPolicy, ToolApproval, ScrumItem, AgentTask, AgentSession, AgentSessionMessage
 from app.git_ops import git_status, git_diff, git_stage, git_unstage, git_commit, git_push, git_log, git_branches, git_ai_commit_message
 import hashlib as _hashlib
 from app.schemas import (
     UserRegister, UserLogin, Token, UserResponse, PermissionResponse,
-    AccessRequestCreate, AccessRequestResponse, ToolInput, ToolResult
+    ToolInput, ToolResult
 )
 from app.auth import (
     hash_password, verify_password, create_access_token,
-    get_current_user, get_superuser, check_permission, decode_token
+    get_current_user, decode_token
 )
 from app.config import (
     ACCESS_TOKEN_EXPIRE_MINUTES, SUPERUSER_PHONE, STATIC_DIR,
@@ -24,7 +24,6 @@ from app.config import (
 )
 from app.tools import execute_tool, TOOLS, _reset_allowed_roots, _get_workspace
 from app import relay as _relay
-from app.utils.qr_code import create_qr_auth_token
 from app.billing.routes import billing_router
 from app.email import send_welcome, send_password_reset
 from app.billing.plan_limits import apply_plan_to_permissions, enforce_plan_limits
@@ -166,7 +165,7 @@ async def register(request: Request, user_data: UserRegister, db: Session = Depe
         device_id=device_id,
         is_superuser=is_first_user,
         is_active=True,
-        plan="pro" if is_first_user else "free",
+        plan="beta",
     )
 
     db.add(new_user)
@@ -249,7 +248,7 @@ async def get_me(current_user: User = Depends(get_current_user), db: Session = D
         "device_id": current_user.device_id,
         "is_superuser": current_user.is_superuser,
         "is_active": current_user.is_active,
-        "plan": current_user.plan or "free",
+        "plan": current_user.plan or "beta",
         "can_run_copilot": bool(perm.can_run_copilot) if perm else False,
         "can_run_commands": bool(perm.can_run_commands) if perm else False,
         "can_edit_files": bool(perm.can_edit_files) if perm else False,
@@ -327,155 +326,6 @@ async def reset_password(data: dict, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Password reset successfully. You can now sign in."}
 
-# ==================== ACCESS REQUEST ROUTES ====================
-
-@app.post("/api/access/request-via-qr", response_model=AccessRequestResponse)
-async def request_access_qr(
-    request_data: AccessRequestCreate,
-    db: Session = Depends(get_db)
-):
-    """Create access request with QR code"""
-    # Check if user already registered
-    existing_user = db.query(User).filter(
-        User.device_id == request_data.device_id
-    ).first()
-    
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Device already registered"
-        )
-    
-    # Generate QR code
-    qr_image, request_id = create_qr_auth_token(
-        request_data.username,
-        request_data.email,
-        request_data.device_id
-    )
-    
-    # Store request (user doesn't exist yet, so we store username)
-    access_request = AccessRequest(
-        user_id=0,  # Will be updated when approved
-        request_type="qr_code",
-        qr_code_data=request_id,
-        status="pending"
-    )
-    
-    db.add(access_request)
-    db.commit()
-    db.refresh(access_request)
-    
-    return {
-        "id": access_request.id,
-        "username": request_data.username,
-        "request_type": "qr_code",
-        "status": "pending",
-        "qr_code_data": qr_image,
-        "created_at": access_request.created_at
-    }
-
-@app.get("/api/access/pending-requests")
-async def get_pending_requests(
-    current_user: User = Depends(get_superuser),
-    db: Session = Depends(get_db)
-):
-    """Get all pending access requests (superuser only)"""
-    requests = db.query(AccessRequest).filter(
-        AccessRequest.status == "pending"
-    ).all()
-    
-    return {
-        "pending_requests": [
-            {
-                "id": r.id,
-                "request_type": r.request_type,
-                "qr_code": r.qr_code_data,
-                "created_at": r.created_at
-            }
-            for r in requests
-        ]
-    }
-
-@app.post("/api/access/approve/{request_id}")
-async def approve_request(
-    request_id: int,
-    current_user: User = Depends(get_superuser),
-    db: Session = Depends(get_db)
-):
-    """Approve access request (superuser only)"""
-    access_request = db.query(AccessRequest).filter(
-        AccessRequest.id == request_id
-    ).first()
-    
-    if not access_request:
-        raise HTTPException(status_code=404, detail="Request not found")
-    
-    access_request.status = "approved"
-    db.commit()
-    
-    return {"message": "Access request approved"}
-
-@app.post("/api/access/reject/{request_id}")
-async def reject_request(
-    request_id: int,
-    current_user: User = Depends(get_superuser),
-    db: Session = Depends(get_db)
-):
-    """Reject access request (superuser only)"""
-    access_request = db.query(AccessRequest).filter(
-        AccessRequest.id == request_id
-    ).first()
-    
-    if not access_request:
-        raise HTTPException(status_code=404, detail="Request not found")
-    
-    access_request.status = "rejected"
-    db.commit()
-    
-    return {"message": "Access request rejected"}
-
-# ==================== PERMISSION ROUTES ====================
-
-@app.get("/api/permissions/{user_id}", response_model=PermissionResponse)
-async def get_user_permissions(
-    user_id: int,
-    current_user: User = Depends(get_superuser),
-    db: Session = Depends(get_db)
-):
-    """Get user permissions (superuser only)"""
-    permission = db.query(UserPermission).filter(
-        UserPermission.user_id == user_id
-    ).first()
-    
-    if not permission:
-        raise HTTPException(status_code=404, detail="Permissions not found")
-    
-    return permission
-
-@app.put("/api/permissions/{user_id}")
-async def update_user_permissions(
-    user_id: int,
-    permissions: PermissionResponse,
-    current_user: User = Depends(get_superuser),
-    db: Session = Depends(get_db)
-):
-    """Update user permissions (superuser only)"""
-    perm = db.query(UserPermission).filter(
-        UserPermission.user_id == user_id
-    ).first()
-    
-    if not perm:
-        raise HTTPException(status_code=404, detail="Permissions not found")
-    
-    perm.can_run_copilot = permissions.can_run_copilot
-    perm.can_run_commands = permissions.can_run_commands
-    perm.can_edit_files = permissions.can_edit_files
-    perm.can_view_files = permissions.can_view_files
-    
-    db.commit()
-    
-    return {"message": "Permissions updated"}
-
 # ==================== TOOL ROUTES ====================
 
 def _get_or_create_trust_policy(user_id: int, db: Session) -> TrustPolicy:
@@ -497,7 +347,7 @@ def _get_or_create_trust_policy(user_id: int, db: Session) -> TrustPolicy:
     db.refresh(policy_row)
     return policy_row
 
-_ASYNC_AGENT_TOOLS = {"ask_agent", "copilot_agent"}
+_ASYNC_AGENT_TOOLS = set()  # ask_agent and copilot_agent now relay to user's Mac via executor
 _TOOL_CONTROL_FIELDS = {"async", "wait", "agent_session_id", "continue_session", "session_name"}
 
 def _ensure_copilot_permission(current_user: User, db: Session):
@@ -964,8 +814,13 @@ async def execute_tool_endpoint(
                 detail=f"Permission denied for {tool_name}"
             )
 
+    # Support both flat {"tool":"x","command":"y"} and nested {"tool":"x","params":{"command":"y"}}
+    if "params" in tool_input and isinstance(tool_input["params"], dict):
+        _raw = {**tool_input["params"], **{k: v for k, v in tool_input.items() if k not in ("tool", "params")}}
+    else:
+        _raw = tool_input
     params = {
-        k: v for k, v in tool_input.items()
+        k: v for k, v in _raw.items()
         if k != "tool" and k not in _TOOL_CONTROL_FIELDS and v is not None
     }
 
@@ -998,59 +853,6 @@ async def execute_tool_endpoint(
             "tool": tool_name,
             "error": blocked_msg,
         }
-
-    approved_request = None
-    if policy.get("require_approval", True) and sensitive:
-        fp = request_fingerprint(current_user.id, tool_name, params)
-        approved_request = db.query(ToolApproval).filter(
-            ToolApproval.user_id == current_user.id,
-            ToolApproval.request_fingerprint == fp,
-            ToolApproval.status == "approved",
-            ToolApproval.consumed_at.is_(None)
-        ).order_by(ToolApproval.created_at.desc()).first()
-
-        if not approved_request:
-            pending = db.query(ToolApproval).filter(
-                ToolApproval.user_id == current_user.id,
-                ToolApproval.request_fingerprint == fp,
-                ToolApproval.status == "pending"
-            ).order_by(ToolApproval.created_at.desc()).first()
-
-            if not pending:
-                pending = ToolApproval(
-                    user_id=current_user.id,
-                    tool_name=tool_name,
-                    input_params=json.dumps(params),
-                    request_fingerprint=fp,
-                    sensitivity_reason=sensitivity_reason,
-                    status="pending",
-                )
-                db.add(pending)
-                db.commit()
-                db.refresh(pending)
-
-            log_entry = CommandLog(
-                user_id=current_user.id,
-                tool_name=tool_name,
-                action=f"Approval required ({sensitivity_reason})",
-                input_params=json.dumps(params),
-                result=f"Pending approval #{pending.id}.",
-                status="pending_approval",
-                device_id=current_user.device_id,
-            )
-            db.add(log_entry)
-            db.commit()
-            return {
-                "success": False,
-                "tool": tool_name,
-                "error": f"Approval required before execution. Request #{pending.id} is pending.",
-                "approval_required": True,
-                "approval_id": pending.id,
-            }
-
-        approved_request.status = "consumed"
-        approved_request.consumed_at = datetime.utcnow()
-        db.commit()
 
     # Long-running agent tools: run asynchronously by default and return tracker URL
     raw_async = tool_input.get("async", True)
@@ -1118,25 +920,39 @@ async def execute_tool_endpoint(
             ),
         }
 
-    # Permissions that require the tool to run on the user's own machine
+    # Permissions that require the tool to run on the user's own machine.
+    # ask_agent / copilot_agent invoke CLIs (claude, gh copilot, codex) that only exist on the user's Mac.
+    # ask_copilot / ask_ai are pure API calls — they run fine on the relay server.
     _MACHINE_PERMS = {"view", "edit", "commands"}
-
-    # Non-superusers must proxy machine-required tools through their CLI agent.
-    # Superusers (= the host owner) still run locally as before.
-    if not current_user.is_superuser and tool["required_permission"] in _MACHINE_PERMS:
+    _MACHINE_AGENT_TOOLS = {"ask_agent", "copilot_agent"}
+    if tool_name in _MACHINE_AGENT_TOOLS:
         if not _relay.is_connected(current_user.id):
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "message": (
-                        "No machine connected. Install the vscars CLI on your laptop "
-                        "and run `vscars start` to connect it."
-                    ),
-                    "code": "no_machine",
-                    "install_cmd": f"curl -fsSL {APP_BASE_URL}/static/install-connector.sh | bash && vscars init",
-                    "setup_url": f"{APP_BASE_URL}/setup",
-                },
-            )
+            return {
+                "success": False, "tool": tool_name,
+                "result": "❌ No machine connected. Run `vscars start` on your machine — agent CLIs (Claude Code, Copilot, Codex) run on your Mac.",
+                "error": "no_machine", "approval_required": None, "approval_id": None,
+                "task_id": None, "agent_session_id": None, "crawler_url": None, "status": None,
+            }
+        machine_id = tool_input.get("machine_id")
+        try:
+            result_data = await _relay.call_tool(current_user.id, machine_id, tool_name, params, timeout=180.0)
+        except ConnectionError as e:
+            raise HTTPException(status_code=503, detail={"message": str(e), "code": "no_machine"})
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail={"message": "Agent did not respond in time (180s).", "code": "timeout"})
+        return {"success": result_data.get("success", True), "tool": tool_name, "result": result_data.get("result", "")}
+
+    # All machine-permission tools must go through the relay.
+    # If no machine is connected, return a clear error instead of running on the relay host.
+    if tool["required_permission"] in _MACHINE_PERMS and not _relay.is_connected(current_user.id):
+        return {
+            "success": False, "tool": tool_name,
+            "result": "❌ No machine connected. Run `vscars start` on your machine to enable this.",
+            "error": "no_machine", "approval_required": None, "approval_id": None,
+            "task_id": None, "agent_session_id": None, "crawler_url": None, "status": None,
+        }
+
+    if tool["required_permission"] in _MACHINE_PERMS and _relay.is_connected(current_user.id):
         machine_id = tool_input.get("machine_id")  # optional: target a specific machine
         try:
             result_data = await _relay.call_tool(
@@ -1193,7 +1009,26 @@ async def execute_tool_endpoint(
                 sync_agent_session.updated_at = datetime.utcnow()
                 db.commit()
 
-        result = execute_tool(tool_name, **params)
+        # AI tools: check provider configured, then use ai_provider layer
+        if tool_name in ("ask_ai", "ask_copilot"):
+            from app import ai_provider
+            if not ai_provider.has_ai_configured(db, current_user.id):
+                return {
+                    "success": False,
+                    "tool": tool_name,
+                    "result": "❌ No AI provider configured. Go to Settings → AI Keys to add your API key.",
+                    "error": "no_ai_provider",
+                }
+            prompt = params.get("prompt") or params.get("query") or ""
+            try:
+                result = ai_provider.chat(db, current_user.id, [{"role": "user", "content": prompt}])
+            except ValueError as _ve:
+                result = f"❌ {_ve}"
+            except Exception as _ae:
+                result = f"❌ AI error: {_ae}"
+        else:
+            result = execute_tool(tool_name, **params)
+
         if sync_agent_session:
             db.add(AgentSessionMessage(
                 session_id=sync_agent_session.id,
@@ -1202,7 +1037,7 @@ async def execute_tool_endpoint(
             ))
             sync_agent_session.updated_at = datetime.utcnow()
             db.commit()
-        
+
         # Log the command execution
         success = not result.startswith("❌")
         log_entry = CommandLog(
@@ -1215,22 +1050,22 @@ async def execute_tool_endpoint(
             device_id=current_user.device_id
         )
         db.add(log_entry)
-        
-        # Save conversation history for ask_copilot
-        if tool_name == "ask_copilot":
-            query = params.get("query", "")
+
+        # Save conversation history for ask_copilot and ask_ai
+        if tool_name in ("ask_copilot", "ask_ai"):
+            query = params.get("query", "") or params.get("prompt", "")
             conversation = ConversationHistory(
                 user_id=current_user.id,
                 query=query,
                 response=result,
-                tool_used="ask_copilot",
-                status="success" if "COPILOT RESPONSE" in result else "error",
+                tool_used=tool_name,
+                status="success" if success else "error",
                 device_id=current_user.device_id
             )
             db.add(conversation)
-        
+
         db.commit()
-        
+
         return {
             "success": success,
             "tool": tool_name,
@@ -1314,131 +1149,6 @@ async def copilot_chat_endpoint_legacy(
         current_user=current_user,
         db=db,
     )
-
-@app.get("/api/tools/history")
-async def get_command_history(
-    limit: int = 50,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get command execution history"""
-    logs = db.query(CommandLog).filter(
-        CommandLog.user_id == current_user.id
-    ).order_by(CommandLog.created_at.desc()).limit(limit).all()
-    
-    return {
-        "total": len(logs),
-        "history": [
-            {
-                "id": log.id,
-                "tool": log.tool_name,
-                "action": log.action,
-                "status": log.status,
-                "result": log.result,
-                "device": log.device_id,
-                "timestamp": log.created_at.isoformat()
-            }
-            for log in logs
-        ]
-    }
-
-
-@app.get("/api/agent/tasks")
-async def list_agent_tasks(
-    request: Request,
-    status_filter: str = "",
-    limit: int = 30,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    q = db.query(AgentTask).filter(AgentTask.user_id == current_user.id)
-    if status_filter:
-        q = q.filter(AgentTask.status == status_filter)
-    tasks = q.order_by(AgentTask.created_at.desc()).limit(max(1, min(limit, 100))).all()
-    return {
-        "tasks": [
-            {
-                "id": t.id,
-                "tool": t.tool_name,
-                "agent_session_id": t.agent_session_id,
-                "status": t.status,
-                "created_at": t.created_at.isoformat() if t.created_at else None,
-                "started_at": t.started_at.isoformat() if t.started_at else None,
-                "finished_at": t.finished_at.isoformat() if t.finished_at else None,
-                "crawler_url": _crawler_url_from_request(request, t.id),
-            }
-            for t in tasks
-        ]
-    }
-
-
-@app.get("/api/agent/tasks/{task_id}")
-async def get_agent_task(
-    request: Request,
-    task_id: int,
-    db: Session = Depends(get_db),
-):
-    # Graceful auth handling: direct-opened links (no auth header) should not
-    # spam 401s; return a safe payload the UI can handle.
-    token = None
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        token = auth.split(" ", 1)[1].strip()
-    if not token:
-        return {
-            "id": task_id,
-            "tool": None,
-            "agent_session_id": None,
-            "status": "auth_required",
-            "result": None,
-            "error": "Authentication required. Open this from the app session.",
-            "created_at": None,
-            "started_at": None,
-            "finished_at": None,
-            "crawler_url": _crawler_url_from_request(request, task_id),
-        }
-
-    try:
-        payload = decode_token(token)
-        username = payload.get("sub")
-        current_user = db.query(User).filter(User.username == username, User.is_active == True).first()
-    except Exception:
-        current_user = None
-
-    if not current_user:
-        return {
-            "id": task_id,
-            "tool": None,
-            "agent_session_id": None,
-            "status": "auth_required",
-            "result": None,
-            "error": "Authentication required. Open this from the app session.",
-            "created_at": None,
-            "started_at": None,
-            "finished_at": None,
-            "crawler_url": _crawler_url_from_request(request, task_id),
-        }
-
-    task = db.query(AgentTask).filter(
-        AgentTask.id == task_id,
-        AgentTask.user_id == current_user.id
-    ).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    return {
-        "id": task.id,
-        "tool": task.tool_name,
-        "agent_session_id": task.agent_session_id,
-        "status": task.status,
-        "result": task.result,
-        "error": task.error,
-        "created_at": task.created_at.isoformat() if task.created_at else None,
-        "started_at": task.started_at.isoformat() if task.started_at else None,
-        "finished_at": task.finished_at.isoformat() if task.finished_at else None,
-        "crawler_url": _crawler_url_from_request(request, task.id),
-    }
-
 
 @app.get("/api/agent/notifications")
 async def get_agent_notifications(
@@ -1636,43 +1346,6 @@ async def send_agent_session_message(
         blocked_msg = blocked_msg_map.get(blocked_reason, "Execution blocked by trust policy.")
         return {"success": False, "status": "blocked", "error": blocked_msg}
 
-    if policy.get("require_approval", True) and sensitive:
-        fp = request_fingerprint(current_user.id, "ask_agent", params)
-        approved = db.query(ToolApproval).filter(
-            ToolApproval.user_id == current_user.id,
-            ToolApproval.request_fingerprint == fp,
-            ToolApproval.status == "approved",
-            ToolApproval.consumed_at.is_(None)
-        ).order_by(ToolApproval.created_at.desc()).first()
-        if not approved:
-            pending = db.query(ToolApproval).filter(
-                ToolApproval.user_id == current_user.id,
-                ToolApproval.request_fingerprint == fp,
-                ToolApproval.status == "pending"
-            ).order_by(ToolApproval.created_at.desc()).first()
-            if not pending:
-                pending = ToolApproval(
-                    user_id=current_user.id,
-                    tool_name="ask_agent",
-                    input_params=json.dumps(params),
-                    request_fingerprint=fp,
-                    sensitivity_reason=sensitivity_reason,
-                    status="pending",
-                )
-                db.add(pending)
-                db.commit()
-                db.refresh(pending)
-            return {
-                "success": False,
-                "status": "pending_approval",
-                "approval_required": True,
-                "approval_id": pending.id,
-                "error": f"Approval required before execution. Request #{pending.id} is pending.",
-            }
-        approved.status = "consumed"
-        approved.consumed_at = datetime.utcnow()
-        db.commit()
-
     if run_async:
         task = AgentTask(
             user_id=current_user.id,
@@ -1708,49 +1381,6 @@ async def send_agent_session_message(
         "agent_session_id": session.id,
         "result": result,
     }
-
-@app.get("/api/tools/execution-log")
-async def get_execution_log(
-    lines: int = 100,
-    current_user: User = Depends(get_current_user)
-):
-    """Get backend execution log from JARVIS"""
-    log_file = "/tmp/jarvis_execution.log"
-    
-    # Only superuser can view backend logs
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only superuser can view execution logs"
-        )
-    
-    try:
-        if not os.path.exists(log_file):
-            return {
-                "status": "info",
-                "message": "No logs available yet",
-                "logs": []
-            }
-        
-        with open(log_file, 'r') as f:
-            all_lines = f.readlines()
-        
-        # Get last N lines
-        recent_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
-        
-        return {
-            "status": "success",
-            "total_lines": len(all_lines),
-            "displayed_lines": len(recent_lines),
-            "log_file": log_file,
-            "logs": [line.rstrip('\n') for line in recent_lines]
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e),
-            "logs": []
-        }
 
 @app.get("/api/tools/conversations")
 async def get_conversations(
@@ -1921,6 +1551,51 @@ async def get_workspace(current_user: User = Depends(get_current_user)):
         "source": source,
         "exists": os.path.isdir(ws_path) if ws_path else True
     }
+
+# ==================== AI PROVIDER SETTINGS ROUTES ====================
+
+@app.get("/api/settings/ai")
+async def get_ai_settings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from app.database import UserAIConfig
+    cfg = db.query(UserAIConfig).filter(UserAIConfig.user_id == current_user.id).first()
+    if not cfg:
+        return {"configured": False, "provider": None, "model": None, "base_url": None, "has_key": False}
+    return {
+        "configured": bool(cfg.api_key),
+        "provider": cfg.provider,
+        "model": cfg.model,
+        "base_url": cfg.base_url,
+        "has_key": bool(cfg.api_key),
+    }
+
+@app.post("/api/settings/ai")
+async def save_ai_settings(data: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from app.database import UserAIConfig
+    from datetime import datetime as _dt
+    cfg = db.query(UserAIConfig).filter(UserAIConfig.user_id == current_user.id).first()
+    if not cfg:
+        cfg = UserAIConfig(user_id=current_user.id)
+        db.add(cfg)
+    if "provider" in data:
+        cfg.provider = data["provider"]
+    if "api_key" in data and data["api_key"]:
+        cfg.api_key = data["api_key"]
+    if "model" in data:
+        cfg.model = data["model"] or None
+    if "base_url" in data:
+        cfg.base_url = data["base_url"] or None
+    cfg.updated_at = _dt.utcnow()
+    db.commit()
+    return {"success": True, "provider": cfg.provider}
+
+@app.delete("/api/settings/ai")
+async def delete_ai_settings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from app.database import UserAIConfig
+    cfg = db.query(UserAIConfig).filter(UserAIConfig.user_id == current_user.id).first()
+    if cfg:
+        cfg.api_key = None
+        db.commit()
+    return {"success": True}
 
 # ==================== TRUST & SAFETY ROUTES ====================
 
@@ -2145,6 +1820,12 @@ async def health_check():
         "public_url": ""
     }
 
+@app.get("/install.sh", include_in_schema=False)
+@app.get("/install", include_in_schema=False)
+async def install_script():
+    path = os.path.join(STATIC_DIR, "install.sh")
+    return FileResponse(path, media_type="text/plain", filename="install.sh")
+
 # ==================== WEBSOCKET STREAMING ====================
 
 @app.websocket("/ws/stream")
@@ -2198,20 +1879,16 @@ async def stream_command_ws(
         r'>\s*/etc/passwd', r'>\s*/etc/shadow',
     ]
 
+    # Use relay if user has a machine connected (regardless of superuser status)
+    use_relay = _relay.is_connected(user.id)
+
     try:
         while True:
             data = await websocket.receive_json()
             command = data.get("command", "").strip()
-            raw_cwd = data.get("cwd") or _get_workspace()
+            cwd = data.get("cwd") or None
 
             if not command:
-                continue
-
-            try:
-                cwd = _resolve_path(raw_cwd)
-            except Exception as e:
-                await websocket.send_json({"type": "error", "data": f"Invalid working directory: {str(e)}"})
-                await websocket.send_json({"type": "done", "exit_code": 1})
                 continue
 
             # Block dangerous patterns
@@ -2221,35 +1898,55 @@ async def stream_command_ws(
                 await websocket.send_json({"type": "done", "exit_code": 1})
                 continue
 
-            # Optional network command restrictions (safe profile)
-            if not policy.get("allow_network", True):
-                if _re.search(r'\\bcurl\\b|\\bwget\\b|\\bssh\\b|\\bscp\\b|\\bnc\\b|\\bncat\\b|\\brsync\\b', command, _re.IGNORECASE):
-                    await websocket.send_json({"type": "error", "data": "BLOCKED: Network commands are disabled in policy."})
+            await websocket.send_json({"type": "start", "command": command})
+
+            if use_relay:
+                # Forward to the user's CLI agent via relay
+                if not _relay.is_connected(user.id):
+                    await websocket.send_json({"type": "error", "data": "No machine connected. Run `vscars start` on your laptop first."})
+                    await websocket.send_json({"type": "done", "exit_code": 1})
+                    continue
+                try:
+                    params = {"command": command}
+                    if cwd:
+                        params["cwd"] = cwd
+                    result = await _relay.call_tool(user.id, None, "run_command", params, timeout=90.0)
+                    output = result.get("result", "")
+                    await websocket.send_json({"type": "output", "data": str(output)})
+                    await websocket.send_json({"type": "done", "exit_code": 0 if result.get("success") else 1})
+                except asyncio.TimeoutError:
+                    await websocket.send_json({"type": "error", "data": "Machine did not respond in time."})
+                    await websocket.send_json({"type": "done", "exit_code": -1})
+                except ConnectionError as e:
+                    await websocket.send_json({"type": "error", "data": str(e)})
+                    await websocket.send_json({"type": "done", "exit_code": 1})
+            else:
+                # Superuser: run directly on the relay host
+                try:
+                    resolved_cwd = _resolve_path(cwd) if cwd else _get_workspace()
+                except Exception as e:
+                    await websocket.send_json({"type": "error", "data": f"Invalid working directory: {str(e)}"})
                     await websocket.send_json({"type": "done", "exit_code": 1})
                     continue
 
-            await websocket.send_json({"type": "start", "command": command})
-
-            try:
-                proc = await asyncio.create_subprocess_shell(
-                    command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT,
-                    cwd=cwd,
-                )
-                async for line in proc.stdout:
-                    text = line.decode("utf-8", errors="replace")
-                    await websocket.send_json({"type": "output", "data": text})
-
-                await proc.wait()
-                await websocket.send_json({"type": "done", "exit_code": proc.returncode})
-
-            except asyncio.TimeoutError:
-                await websocket.send_json({"type": "error", "data": "Command timed out."})
-                await websocket.send_json({"type": "done", "exit_code": -1})
-            except Exception as exc:
-                await websocket.send_json({"type": "error", "data": str(exc)})
-                await websocket.send_json({"type": "done", "exit_code": -1})
+                try:
+                    proc = await asyncio.create_subprocess_shell(
+                        command,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.STDOUT,
+                        cwd=resolved_cwd,
+                    )
+                    async for line in proc.stdout:
+                        text = line.decode("utf-8", errors="replace")
+                        await websocket.send_json({"type": "output", "data": text})
+                    await proc.wait()
+                    await websocket.send_json({"type": "done", "exit_code": proc.returncode})
+                except asyncio.TimeoutError:
+                    await websocket.send_json({"type": "error", "data": "Command timed out."})
+                    await websocket.send_json({"type": "done", "exit_code": -1})
+                except Exception as exc:
+                    await websocket.send_json({"type": "error", "data": str(exc)})
+                    await websocket.send_json({"type": "done", "exit_code": -1})
 
     except WebSocketDisconnect:
         pass
@@ -2382,48 +2079,264 @@ async def delete_idea(idea_id: int, current_user: User = Depends(get_current_use
     return {"success": True}
 
 
-# ==================== SAVED WORKFLOWS ROUTES ====================
+@app.post("/api/ideas/{idea_id}/breakdown")
+async def breakdown_idea(
+    idea_id: int,
+    data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Use AI to break an idea into epic → stories → tasks on the scrum board."""
+    from app import ai_provider
 
-@app.get("/api/workflows")
-async def list_workflows(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    workflows = db.query(SavedWorkflow).filter(SavedWorkflow.user_id == current_user.id).order_by(SavedWorkflow.run_count.desc()).all()
-    return {"workflows": [{"id": w.id, "name": w.name, "command": w.command, "cwd": w.cwd,
-                           "icon": w.icon, "run_count": w.run_count,
-                           "last_run_at": w.last_run_at.isoformat() if w.last_run_at else None} for w in workflows]}
+    if not ai_provider.has_ai_configured(db, current_user.id):
+        raise HTTPException(status_code=400, detail="No AI provider configured. Add your API key in Settings → AI Keys.")
 
-@app.post("/api/workflows")
-async def create_workflow(data: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    name = data.get("name", "").strip()
-    command = data.get("command", "").strip()
-    if not name or not command:
-        raise HTTPException(status_code=400, detail="Name and command required")
-    wf = SavedWorkflow(user_id=current_user.id, name=name, command=command,
-                       cwd=data.get("cwd", "").strip() or None, icon=data.get("icon", "⚡"))
-    db.add(wf); db.commit(); db.refresh(wf)
-    return {"id": wf.id, "name": wf.name, "command": wf.command, "cwd": wf.cwd, "icon": wf.icon}
+    idea = db.query(IdeaNote).filter(IdeaNote.id == idea_id, IdeaNote.user_id == current_user.id).first()
+    if not idea:
+        raise HTTPException(status_code=404, detail="Idea not found")
 
-@app.delete("/api/workflows/{workflow_id}")
-async def delete_workflow(workflow_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    wf = db.query(SavedWorkflow).filter(SavedWorkflow.id == workflow_id, SavedWorkflow.user_id == current_user.id).first()
-    if not wf:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    db.delete(wf); db.commit()
-    return {"success": True}
+    prompt = f"""You are a senior software architect. Break down this idea into an actionable development plan.
 
-@app.post("/api/workflows/{workflow_id}/run")
-async def run_workflow(workflow_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    perm = db.query(UserPermission).filter(UserPermission.user_id == current_user.id).first()
-    if not perm or not perm.can_run_commands:
-        raise HTTPException(status_code=403, detail="Commands permission required")
-    wf = db.query(SavedWorkflow).filter(SavedWorkflow.id == workflow_id, SavedWorkflow.user_id == current_user.id).first()
-    if not wf:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    from app.tools import execute_tool as _exec
-    result = _exec("run_command", {"command": wf.command, "cwd": wf.cwd or ""}, current_user.id, current_user.device_id, db)
-    wf.run_count += 1
-    wf.last_run_at = datetime.utcnow()
+IDEA TITLE: {idea.title or 'Untitled'}
+IDEA: {idea.body}
+
+Return ONLY valid JSON in this exact format (no markdown, no explanation):
+{{
+  "epic": {{
+    "title": "Short epic title",
+    "description": "What this epic achieves"
+  }},
+  "stories": [
+    {{
+      "title": "User story title",
+      "description": "As a user, I want...",
+      "tasks": [
+        {{"title": "Specific technical task", "description": "Implementation detail", "points": 2}},
+        {{"title": "Another task", "description": "Detail", "points": 1}}
+      ]
+    }}
+  ]
+}}
+
+Keep it practical: 2-4 stories, 2-5 tasks per story. Tasks should be specific enough for an AI agent to implement."""
+
+    try:
+        response = ai_provider.chat(
+            db, current_user.id,
+            [{"role": "user", "content": prompt}],
+            system="You are a software architect. Return only valid JSON, no markdown fences."
+        )
+        import json as _json
+        # Strip markdown fences if present
+        clean = response.strip()
+        if clean.startswith("```"):
+            clean = clean.split("\n", 1)[1] if "\n" in clean else clean
+            clean = clean.rsplit("```", 1)[0]
+        plan = _json.loads(clean)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI breakdown failed: {e}")
+
+    # Create epic
+    epic = ScrumItem(
+        user_id=current_user.id,
+        item_type="epic",
+        title=plan["epic"]["title"],
+        description=plan["epic"].get("description", ""),
+        status="todo",
+        priority="high",
+        tags=f"idea:{idea_id}",
+    )
+    db.add(epic)
+    db.flush()
+
+    created_stories = []
+    for s in plan.get("stories", []):
+        story = ScrumItem(
+            user_id=current_user.id,
+            item_type="story",
+            title=s["title"],
+            description=s.get("description", ""),
+            status="todo",
+            priority="medium",
+            parent_id=epic.id,
+            tags=f"idea:{idea_id}",
+        )
+        db.add(story)
+        db.flush()
+
+        task_ids = []
+        for t in s.get("tasks", []):
+            task = ScrumItem(
+                user_id=current_user.id,
+                item_type="task",
+                title=t["title"],
+                description=t.get("description", ""),
+                status="todo",
+                priority="medium",
+                parent_id=story.id,
+                story_points=t.get("points", 1),
+                tags=f"idea:{idea_id}",
+            )
+            db.add(task)
+            db.flush()
+            task_ids.append(task.id)
+
+        created_stories.append({"story_id": story.id, "task_ids": task_ids})
+
+    # Mark idea as in progress
+    idea.tags = (idea.tags or "") + f",epic:{epic.id}"
+    idea.updated_at = datetime.utcnow()
     db.commit()
-    return result
+
+    return {
+        "success": True,
+        "epic_id": epic.id,
+        "stories": created_stories,
+        "message": f"Created 1 epic, {len(plan.get('stories', []))} stories on the scrum board."
+    }
+
+
+async def _run_pipeline_task(user_id: int, session_id: int, story_id: int, db_ref):
+    """Run the next pending task in a story pipeline using AI."""
+    from app import ai_provider
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        tasks = db.query(ScrumItem).filter(
+            ScrumItem.parent_id == story_id,
+            ScrumItem.user_id == user_id,
+            ScrumItem.status == "todo"
+        ).order_by(ScrumItem.id).all()
+
+        for task in tasks:
+            task.status = "in_progress"
+            task.updated_at = datetime.utcnow()
+            db.commit()
+
+            # Build message history for context
+            history = db.query(AgentSessionMessage).filter(
+                AgentSessionMessage.session_id == session_id,
+                AgentSessionMessage.role != "system"
+            ).order_by(AgentSessionMessage.created_at).limit(20).all()
+
+            messages = [{"role": m.role, "content": m.content} for m in history]
+            messages.append({"role": "user", "content": f"Task: {task.title}\n\n{task.description or ''}\n\nProvide implementation."})
+
+            try:
+                response = ai_provider.chat(db, user_id, messages)
+
+                # Save to session
+                user_msg = AgentSessionMessage(session_id=session_id, role="user", content=f"Task: {task.title}\n{task.description or ''}")
+                ai_msg = AgentSessionMessage(session_id=session_id, role="assistant", content=response)
+                db.add(user_msg)
+                db.add(ai_msg)
+
+                task.status = "review"
+                task.updated_at = datetime.utcnow()
+
+                # Create notification
+                notif = AgentTask(
+                    user_id=user_id,
+                    tool_name="pipeline_task",
+                    input_params=f'{{"task": "{task.title[:80]}"}}',
+                    status="completed",
+                    result=response[:500],
+                    agent_session_id=session_id,
+                    scrum_item_id=task.id,
+                    notified=False,
+                )
+                db.add(notif)
+                db.commit()
+
+                await asyncio.sleep(1)  # brief pause between tasks
+
+            except Exception as e:
+                task.status = "todo"
+                task.updated_at = datetime.utcnow()
+                db.commit()
+                break
+
+        # Check if all tasks done → mark story done
+        remaining = db.query(ScrumItem).filter(
+            ScrumItem.parent_id == story_id,
+            ScrumItem.status.in_(["todo", "in_progress"])
+        ).count()
+
+        if remaining == 0:
+            story = db.query(ScrumItem).filter(ScrumItem.id == story_id).first()
+            if story:
+                story.status = "done"
+                story.updated_at = datetime.utcnow()
+                db.commit()
+    finally:
+        db.close()
+
+
+@app.post("/api/scrum/items/{item_id}/run")
+async def run_scrum_item(
+    item_id: int,
+    data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Start an AI agent session to work on a scrum story and its tasks."""
+    from app import ai_provider
+
+    if not ai_provider.has_ai_configured(db, current_user.id):
+        raise HTTPException(status_code=400, detail="No AI provider configured.")
+
+    story = db.query(ScrumItem).filter(
+        ScrumItem.id == item_id,
+        ScrumItem.user_id == current_user.id
+    ).first()
+    if not story:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    # Get tasks for this story
+    tasks = db.query(ScrumItem).filter(
+        ScrumItem.parent_id == item_id,
+        ScrumItem.user_id == current_user.id,
+        ScrumItem.status.in_(["todo", "in_progress"])
+    ).order_by(ScrumItem.id).all()
+
+    if not tasks:
+        raise HTTPException(status_code=400, detail="No pending tasks found for this story.")
+
+    # Create or resume agent session for this story
+    session = db.query(AgentSession).filter(
+        AgentSession.user_id == current_user.id,
+        AgentSession.name == f"Pipeline: {story.title[:40]}",
+        AgentSession.is_active == True
+    ).first()
+
+    if not session:
+        session = AgentSession(
+            user_id=current_user.id,
+            name=f"Pipeline: {story.title[:40]}",
+            agent="ai_provider",
+            is_active=True,
+        )
+        db.add(session)
+        db.flush()
+
+        # Add system context message
+        sys_msg = AgentSessionMessage(
+            session_id=session.id,
+            role="system",
+            content=f"You are working on: {story.title}\n\n{story.description or ''}\n\nYou will be given tasks one by one. For each task, provide a clear implementation plan or code."
+        )
+        db.add(sys_msg)
+
+    story.status = "in_progress"
+    story.updated_at = datetime.utcnow()
+    db.commit()
+
+    # Kick off first pending task in background
+    asyncio.ensure_future(_run_pipeline_task(current_user.id, session.id, item_id, db))
+
+    return {"success": True, "session_id": session.id, "story": story.title, "pending_tasks": len(tasks)}
 
 
 # ==================== CLI API KEY ROUTES ====================
@@ -2505,27 +2418,85 @@ async def dashboard_brief(current_user: User = Depends(get_current_user), db: Se
         CommandLog.created_at >= today_start
     ).count()
 
-    ideas_pending = db.query(IdeaNote).filter(
+    # Ideas not yet broken down (no "epic:" in tags)
+    all_ideas = db.query(IdeaNote).filter(
         IdeaNote.user_id == current_user.id,
         IdeaNote.is_done == False
+    ).all()
+    pending_ideas = sum(1 for i in all_ideas if not i.tags or "epic:" not in (i.tags or ""))
+
+    # Stories currently being worked on
+    active_pipelines = db.query(ScrumItem).filter(
+        ScrumItem.user_id == current_user.id,
+        ScrumItem.item_type == "story",
+        ScrumItem.status == "in_progress",
     ).count()
 
-    try:
-        recent_commits = git_log(5)
-        git_stat = git_status()
-        git_status_out = git_stat.get("output", "") if "fatal" not in git_stat.get("output", "") else "No git repo connected"
-        recent_commits_out = recent_commits.get("output", "") if "fatal" not in recent_commits.get("output", "") else ""
-    except Exception:
-        git_status_out = "No git repo connected"
-        recent_commits_out = ""
+    # Tasks waiting for human review
+    tasks_in_review = db.query(ScrumItem).filter(
+        ScrumItem.user_id == current_user.id,
+        ScrumItem.item_type == "task",
+        ScrumItem.status == "review",
+    ).count()
 
     return {
         "commands_today": commands_today,
-        "ideas_pending": ideas_pending,
-        "git_status": git_status_out,
-        "recent_commits": recent_commits_out,
+        "pending_ideas": pending_ideas,
+        "active_pipelines": active_pipelines,
+        "tasks_in_review": tasks_in_review,
         "plan": current_user.plan,
         "daily_api_calls": current_user.daily_api_calls,
+    }
+
+
+# ==================== DEBUG DASHBOARD ====================
+
+@app.get("/api/debug/relay")
+async def debug_relay(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Live relay state — connected machines, pending calls, recent tool history."""
+    machines = db.query(RegisteredMachine).filter(
+        RegisteredMachine.user_id == current_user.id,
+        RegisteredMachine.is_active == True,
+    ).all()
+    connected_ids = set(_relay.get_connected_machines(current_user.id))
+
+    recent_logs = db.query(CommandLog).filter(
+        CommandLog.user_id == current_user.id,
+    ).order_by(CommandLog.created_at.desc()).limit(20).all()
+
+    return {
+        "user": {
+            "id": current_user.id,
+            "username": current_user.username,
+            "plan": current_user.plan,
+            "is_superuser": current_user.is_superuser,
+        },
+        "relay": {
+            "any_connected": bool(connected_ids),
+            "connected_machine_ids": list(connected_ids),
+            "pending_calls": list(_relay._pending.keys()),
+        },
+        "machines": [
+            {
+                "machine_id": m.machine_id,
+                "name": m.name,
+                "hostname": m.hostname,
+                "os_info": m.os_info,
+                "is_connected": m.machine_id in connected_ids,
+                "last_seen_at": m.last_seen_at.isoformat() if m.last_seen_at else None,
+            }
+            for m in machines
+        ],
+        "recent_tool_calls": [
+            {
+                "tool": log.tool_name,
+                "action": log.action,
+                "status": log.status,
+                "result_preview": (log.result or "")[:120],
+                "at": log.created_at.isoformat() if log.created_at else None,
+            }
+            for log in recent_logs
+        ],
     }
 
 
@@ -2639,6 +2610,65 @@ async def list_machines(
     }
 
 
+@app.post("/api/machines/autodetect")
+async def machine_autodetect(
+    data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Called by the CLI agent on connect — stores autodetected workspace, git repos, agents."""
+    machine_id = data.get("machine_id")
+    if not machine_id:
+        raise HTTPException(status_code=400, detail="machine_id required")
+    machine = db.query(RegisteredMachine).filter(
+        RegisteredMachine.machine_id == machine_id,
+        RegisteredMachine.user_id == current_user.id,
+        RegisteredMachine.is_active == True,
+    ).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+    # Store autodetect payload as JSON in os_info extended field
+    machine.os_info = data.get("os_info", machine.os_info)
+    if data.get("autodetect"):
+        import json as _json
+        machine.hostname = data.get("hostname", machine.hostname)
+        # Persist autodetect data in a new column if available, else piggyback on hostname
+        try:
+            machine.autodetect = _json.dumps(data.get("autodetect", {}))
+        except Exception:
+            pass
+    db.commit()
+    return {"success": True}
+
+
+@app.get("/api/machines/autodetect")
+async def get_machine_autodetect(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return autodetect data for the user's connected machine."""
+    machines = db.query(RegisteredMachine).filter(
+        RegisteredMachine.user_id == current_user.id,
+        RegisteredMachine.is_active == True,
+        RegisteredMachine.is_connected == True,
+    ).all()
+    result = []
+    for m in machines:
+        ad = {}
+        try:
+            import json as _json
+            if hasattr(m, "autodetect") and m.autodetect:
+                ad = _json.loads(m.autodetect)
+        except Exception:
+            pass
+        result.append({
+            "machine_id": m.machine_id,
+            "name": m.name,
+            "autodetect": ad,
+        })
+    return {"machines": result}
+
+
 @app.delete("/api/machines/{machine_id}")
 async def delete_machine(
     machine_id: str,
@@ -2729,11 +2759,8 @@ _ALL_MODELS = [
 ]
 
 _PLAN_MODEL_IDS = {
-    # Free: limited model selection (AI chat only, no machine access)
-    "free":        {"claude-haiku-4.5", "gpt-5-mini"},
-    "pro":         {"claude-haiku-4.5", "claude-sonnet-4.6", "gpt-4.1", "gpt-5-mini", "gpt-5.2"},
-    "team":        {m["id"] for m in _ALL_MODELS},
-    "self_hosted": {m["id"] for m in _ALL_MODELS},
+    # Beta: standard model selection for all users
+    "beta": {"claude-haiku-4.5", "claude-sonnet-4.6", "gpt-4.1", "gpt-5-mini", "gpt-5.2"},
 }
 
 @app.get("/api/copilot/models")
@@ -2748,7 +2775,7 @@ async def get_copilot_models(current_user: User = Depends(get_current_user)):
 
     if not allowed:
         return {"plan": plan, "models": [], "default": None,
-                "message": "Copilot is not available on the Free plan. Upgrade to Pro to unlock."}
+                "message": "No models available for your plan."}
 
     models = [m for m in _ALL_MODELS if m["id"] in allowed]
     return {"plan": plan, "models": models, "default": models[0]["id"]}

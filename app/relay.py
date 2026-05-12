@@ -49,7 +49,7 @@ async def call_tool(
     machine_id: str | None,
     tool_name: str,
     params: dict,
-    timeout: float = 90.0,
+    timeout: float = 200.0,
 ) -> dict:
     """Forward a tool call to the user's connected machine and await the result.
 

@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VSCARS Debug</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0a0a0f; color: #e2e8f0; font-family: 'Menlo', 'Monaco', monospace; font-size: 13px; padding: 20px; }
+  h1 { font-size: 18px; font-weight: 700; color: #a78bfa; margin-bottom: 4px; }
+  .subtitle { color: #64748b; font-size: 11px; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  @media(max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: #12121a; border: 1px solid #1e1e2e; border-radius: 12px; padding: 16px; }
+  .card-title { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: .8px; margin-bottom: 12px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; }
+  .green { background: #22c55e22; color: #22c55e; }
+  .red { background: #ef444422; color: #ef4444; }
+  .yellow { background: #f59e0b22; color: #f59e0b; }
+  .purple { background: #a78bfa22; color: #a78bfa; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #1e1e2e; }
+  .row:last-child { border-bottom: none; }
+  .label { color: #64748b; min-width: 120px; }
+  .val { color: #e2e8f0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .machine-card { background: #0f0f1a; border: 1px solid #1e1e2e; border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+  .machine-name { font-weight: 700; color: #e2e8f0; margin-bottom: 4px; }
+  .machine-meta { color: #64748b; font-size: 11px; }
+  .log-row { padding: 6px 0; border-bottom: 1px solid #1e1e2e; display: grid; grid-template-columns: 80px 100px 60px 1fr; gap: 8px; align-items: start; }
+  .log-row:last-child { border-bottom: none; }
+  .log-time { color: #64748b; font-size: 10px; }
+  .log-tool { color: #a78bfa; }
+  .log-result { color: #94a3b8; font-size: 11px; grid-column: 1 / -1; padding-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty { color: #64748b; font-style: italic; padding: 12px 0; }
+  .refresh-btn { background: #a78bfa; color: #000; border: none; border-radius: 8px; padding: 8px 18px; font-size: 12px; font-weight: 700; cursor: pointer; margin-right: 8px; }
+  .refresh-btn:hover { background: #c4b5fd; }
+  .auto-badge { font-size: 11px; color: #64748b; }
+  #last-updated { color: #64748b; font-size: 11px; margin-top: 8px; }
+  .test-btn { background: #0ea5e9; color: #000; border: none; border-radius: 6px; padding: 5px 12px; font-size: 11px; font-weight: 700; cursor: pointer; }
+  .test-btn:hover { background: #38bdf8; }
+  #test-result { margin-top: 10px; padding: 10px; background: #0f0f1a; border-radius: 6px; border: 1px solid #1e1e2e; color: #94a3b8; font-size: 12px; display: none; white-space: pre-wrap; }
+  .pending-pill { background: #f59e0b22; color: #f59e0b; padding: 2px 8px; border-radius: 6px; font-size: 10px; margin: 2px; display: inline-block; }
+  .token-input { background: #0f0f1a; border: 1px solid #1e1e2e; border-radius: 6px; padding: 6px 10px; color: #e2e8f0; font-size: 12px; width: 100%; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+
+<h1>⚡ VSCARS Debug Dashboard</h1>
+<div class="subtitle">Live relay state · auto-refreshes every 5s</div>
+
+<div style="margin-bottom:16px">
+  <input type="password" id="token-input" class="token-input" placeholder="Paste your JWT token (from localStorage: authToken)">
+  <button class="refresh-btn" onclick="load()">Refresh Now</button>
+  <span class="auto-badge" id="auto-label">Auto-refresh: ON</span>
+  <div id="last-updated"></div>
+</div>
+
+<div class="grid">
+  <!-- User & Relay Status -->
+  <div class="card">
+    <div class="card-title">Relay Status</div>
+    <div id="relay-status"><div class="empty">Loading…</div></div>
+  </div>
+
+  <!-- Connected Machines -->
+  <div class="card">
+    <div class="card-title">Machines</div>
+    <div id="machines-list"><div class="empty">Loading…</div></div>
+  </div>
+</div>
+
+<!-- Live Tool Test -->
+<div class="card" style="margin-bottom:16px">
+  <div class="card-title">Live Tool Test</div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <input type="text" id="test-command" value="pwd" style="background:#0f0f1a;border:1px solid #1e1e2e;border-radius:6px;padding:6px 10px;color:#e2e8f0;font-size:12px;width:200px">
+    <button class="test-btn" onclick="runTestCommand()">Run via Relay</button>
+    <button class="test-btn" style="background:#22c55e" onclick="testListFiles()">list_files</button>
+    <button class="test-btn" style="background:#f59e0b;color:#000" onclick="testWorkspaceInfo()">workspace_info</button>
+  </div>
+  <div id="test-result"></div>
+</div>
+
+<!-- Recent Tool Calls -->
+<div class="card">
+  <div class="card-title">Recent Tool Calls (last 20)</div>
+  <div id="tool-log"><div class="empty">Loading…</div></div>
+</div>
+
+<script>
+let token = localStorage.getItem('authToken') || '';
+const tokenInput = document.getElementById('token-input');
+if (token) tokenInput.value = token;
+tokenInput.addEventListener('input', () => { token = tokenInput.value.trim(); });
+
+function getToken() {
+  return tokenInput.value.trim() || localStorage.getItem('authToken') || '';
+}
+
+async function apiFetch(path, opts = {}) {
+  const t = getToken();
+  if (!t) throw new Error('No token — paste your JWT above');
+  const res = await fetch(path, {
+    ...opts,
+    headers: { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json', ...(opts.headers || {}) },
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+function fmt(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleTimeString();
+}
+
+async function load() {
+  try {
+    const data = await apiFetch('/api/debug/relay');
+
+    // Relay status
+    const r = data.relay;
+    const u = data.user;
+    document.getElementById('relay-status').innerHTML = `
+      <div class="row"><span class="label">User</span><span class="val">${u.username} <span class="badge purple">${u.plan}</span>${u.is_superuser ? ' <span class="badge yellow">superuser</span>' : ''}</span></div>
+      <div class="row"><span class="label">Machine connected</span><span class="val">${r.any_connected ? '<span class="badge green">● YES</span>' : '<span class="badge red">○ NO</span>'}</span></div>
+      <div class="row"><span class="label">Connected IDs</span><span class="val">${r.connected_machine_ids.length ? r.connected_machine_ids.map(id => `<span class="badge green">${id.slice(0,8)}</span>`).join(' ') : '<span style="color:#64748b">none</span>'}</span></div>
+      <div class="row"><span class="label">Pending calls</span><span class="val">${r.pending_calls.length ? r.pending_calls.map(id => `<span class="pending-pill">${id.slice(0,8)}</span>`).join('') : '<span style="color:#64748b">none</span>'}</span></div>
+    `;
+
+    // Machines
+    const machines = data.machines;
+    if (!machines.length) {
+      document.getElementById('machines-list').innerHTML = '<div class="empty">No machines registered. Run `vscars init` then `vscars start`.</div>';
+    } else {
+      document.getElementById('machines-list').innerHTML = machines.map(m => `
+        <div class="machine-card">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="machine-name">${m.name}</div>
+            <span class="badge ${m.is_connected ? 'green' : 'red'}">${m.is_connected ? '● Online' : '○ Offline'}</span>
+          </div>
+          <div class="machine-meta">${m.hostname || ''} · ${m.os_info || ''}</div>
+          <div class="machine-meta">ID: ${m.machine_id.slice(0,12)}… · Last seen: ${fmt(m.last_seen_at)}</div>
+        </div>
+      `).join('');
+    }
+
+    // Tool log
+    const logs = data.recent_tool_calls;
+    if (!logs.length) {
+      document.getElementById('tool-log').innerHTML = '<div class="empty">No tool calls yet.</div>';
+    } else {
+      document.getElementById('tool-log').innerHTML = logs.map(l => `
+        <div class="log-row">
+          <span class="log-time">${fmt(l.at)}</span>
+          <span class="log-tool">${l.tool}</span>
+          <span class="badge ${l.status === 'success' ? 'green' : 'red'}">${l.status}</span>
+          <span></span>
+          <span class="log-result">${l.result_preview || '—'}</span>
+        </div>
+      `).join('');
+    }
+
+    document.getElementById('last-updated').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById('relay-status').innerHTML = `<div class="empty" style="color:#ef4444">${e.message}</div>`;
+  }
+}
+
+async function runTestCommand() {
+  const cmd = document.getElementById('test-command').value.trim();
+  if (!cmd) return;
+  const el = document.getElementById('test-result');
+  el.style.display = 'block';
+  el.textContent = `Running: ${cmd}\n…`;
+  try {
+    const data = await apiFetch('/api/tools/execute', {
+      method: 'POST',
+      body: JSON.stringify({ tool: 'run_command', command: cmd }),
+    });
+    el.textContent = `✅ success: ${data.success}\n\n${data.result}`;
+  } catch (e) {
+    el.textContent = `❌ ${e.message}`;
+  }
+}
+
+async function testListFiles() {
+  const el = document.getElementById('test-result');
+  el.style.display = 'block';
+  el.textContent = 'Running list_files…';
+  try {
+    const data = await apiFetch('/api/tools/execute', {
+      method: 'POST',
+      body: JSON.stringify({ tool: 'list_files' }),
+    });
+    el.textContent = `✅ success: ${data.success}\n\n${data.result}`;
+  } catch (e) {
+    el.textContent = `❌ ${e.message}`;
+  }
+}
+
+async function testWorkspaceInfo() {
+  const el = document.getElementById('test-result');
+  el.style.display = 'block';
+  el.textContent = 'Running get_workspace_info…';
+  try {
+    const data = await apiFetch('/api/tools/execute', {
+      method: 'POST',
+      body: JSON.stringify({ tool: 'get_workspace_info' }),
+    });
+    el.textContent = `✅ success: ${data.success}\n\n${data.result}`;
+  } catch (e) {
+    el.textContent = `❌ ${e.message}`;
+  }
+}
+
+// Auto-refresh every 5s
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

@@ -54,6 +54,22 @@ class User(Base):
     # CLI API key — issued on pro+ activation; SHA256 stored, raw shown once
     api_key_hash = Column(String, nullable=True, index=True)
 
+class UserAIConfig(Base):
+    """Per-user AI provider configuration — supports any OpenAI-compatible API."""
+    __tablename__ = "user_ai_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, index=True, unique=True)
+    # Active provider: anthropic | openai | groq | together | ollama | custom
+    provider = Column(String, default="anthropic")
+    # API key (stored in plaintext — user's own key, no billing risk)
+    api_key = Column(String, nullable=True)
+    # Base URL for OpenAI-compatible APIs (Ollama: http://localhost:11434/v1, Groq: https://api.groq.com/openai/v1, etc.)
+    base_url = Column(String, nullable=True)
+    # Model name override (e.g. "llama3", "mixtral-8x7b", "claude-sonnet-4-6")
+    model = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
 class UserPermission(Base):
     __tablename__ = "user_permissions"
 
@@ -233,6 +249,7 @@ class RegisteredMachine(Base):
     is_connected = Column(Boolean, default=False)          # agent currently online?
     last_seen_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    autodetect = Column(Text, nullable=True)               # JSON: workspace, git_repos, agents
 
 class TrustPolicy(Base):
     __tablename__ = "trust_policies"
@@ -332,6 +349,37 @@ def init_db():
     _migrate_add_agent_session_columns()
     _migrate_add_agent_task_columns()
     _migrate_add_scrum_columns()
+    _migrate_add_user_ai_config()
+
+
+def _migrate_add_user_ai_config():
+    """Create user_ai_configs table columns if it already exists but is missing columns."""
+    import sqlalchemy as sa
+    with engine.connect() as conn:
+        try:
+            result = conn.execute(sa.text("PRAGMA table_info(user_ai_configs)"))
+            existing = {row[1] for row in result}
+        except Exception:
+            return
+
+        new_cols = [
+            ("provider", "VARCHAR DEFAULT 'anthropic'"),
+            ("api_key", "VARCHAR"),
+            ("base_url", "VARCHAR"),
+            ("model", "VARCHAR"),
+            ("updated_at", "DATETIME"),
+        ]
+        for col_name, col_def in new_cols:
+            if col_name not in existing:
+                try:
+                    conn.execute(sa.text(
+                        f"ALTER TABLE user_ai_configs ADD COLUMN {col_name} {col_def}"
+                    ))
+                    conn.commit()
+                    log.info("Migration: added column user_ai_configs.%s", col_name)
+                except Exception as exc:
+                    log.debug("Migration skip user_ai_configs.%s: %s", col_name, exc)
+
 
 def _migrate_add_billing_columns():
     """Add billing columns to existing 'users' table if they don't exist yet.

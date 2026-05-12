@@ -636,59 +636,6 @@ async function register() {
     }
 }
 
-async function requestQRAccess() {
-    const username = document.getElementById('qr-username').value.trim();
-    const email = document.getElementById('qr-email').value.trim();
-    const device_id = document.getElementById('qr-device-id').value.trim();
-    const errorElement = document.getElementById('qr-error');
-    
-    errorElement.textContent = '';
-    
-    if (!username || !email || !device_id) {
-        errorElement.textContent = '⚠️ All fields are required';
-        return;
-    }
-    
-    showLoading('Generating QR code...');
-    
-    try {
-        const response = await fetch('/api/access/request-via-qr', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                username, email, device_id,
-                request_type: 'qr_code'
-            })
-        });
-        
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'QR request failed');
-        }
-        
-        const data = await response.json();
-        
-        // Display QR code (legacy UI-safe guard)
-        const qrImg = document.getElementById('qr-code-image');
-        const qrReq = document.getElementById('qr-request-id');
-        const qrBox = document.getElementById('qr-display');
-        if (qrImg && qrReq && qrBox) {
-            qrImg.src = `data:image/png;base64,${data.qr_code_data}`;
-            qrReq.textContent = data.request_id;
-            qrBox.style.display = 'block';
-        } else {
-            showToast('QR request created, but QR display UI is not enabled in this layout.', 'warning');
-        }
-        
-        hideLoading();
-        showToast('✓ QR code generated!', 'success');
-    } catch (error) {
-        hideLoading();
-        errorElement.textContent = `❌ ${error.message}`;
-        showToast(error.message, 'error');
-    }
-}
-
 function logout() {
     if (_tokenExpiryTimer) { clearTimeout(_tokenExpiryTimer); _tokenExpiryTimer = null; }
     if (authToken) {
@@ -743,6 +690,8 @@ function showMainView() {
     loadDashboard();
     loadTools();
     checkGitHubToken();
+    loadAISettings();
+    checkAIConfigured();
     loadBillingStatus();
     startAgentNotificationPolling();
     loadAgentSessions();
@@ -789,17 +738,14 @@ function switchView(viewName) {
     if (typeof _updateDrawerCurrentView === 'function') _updateDrawerCurrentView();
 
     // Load view-specific data
-    if (viewName === 'admin') {
-        loadAdminPanel();
-    } else if (viewName === 'scrum') {
+    if (viewName === 'scrum') {
         loadScrumBoard();
         loadScrumRunnerStatus(true);
-    } else if (viewName === 'activity') {
-        loadActivityLog();
     } else if (viewName === 'conversations') {
         loadConversations();
     } else if (viewName === 'settings') {
         checkGitHubToken();
+        loadAISettings();
         loadWorkspace();
         loadTrustPolicy();
         loadTrustApprovals();
@@ -864,8 +810,10 @@ function quickRun() {
 }
 
 function quickChat() {
+    const provider = window._aiProvider || 'AI';
+    const label = `Ask ${provider.charAt(0).toUpperCase() + provider.slice(1)}…`;
     showToolModal('ask_copilot', {
-        query: { type: 'textarea', label: 'Ask AI (GPT-4o)...', required: true }
+        query: { type: 'textarea', label, required: true }
     });
 }
 
@@ -957,7 +905,7 @@ function showTool(toolName) {
         },
         copilot_agent: { prompt: { type: 'textarea', label: '🤖 What should Copilot do? (edit files, add features, fix bugs, refactor...)', required: true }, project_path: { type: 'text', label: 'Project Path (blank = workspace)', required: false }, model: { type: 'text', label: 'Model (default: claude-haiku-4.5 | claude-sonnet-4.6 / gpt-5.2)', required: false }, allow_tools: { type: 'text', label: 'Permissions (all / read / edit)', required: false } },
         browse_directory: { dirpath: { type: 'text', label: 'Directory Path (blank = workspace)', required: false }, depth: { type: 'number', label: 'Depth (default: 3)', required: false }, show_hidden: { type: 'text', label: 'Show hidden files? (true/false)', required: false } },
-        ask_copilot: { query: { type: 'textarea', label: 'Ask AI (GPT-4o)...', required: true } },
+        ask_copilot: { query: { type: 'textarea', label: `Ask ${(window._aiProvider||'AI').charAt(0).toUpperCase()+(window._aiProvider||'AI').slice(1)}…`, required: true } },
         copilot_agent: {
             prompt:       { type: 'textarea', label: 'What should Copilot do? (edit files, add features, fix bugs…)', required: true },
             project_path: { type: 'text',     label: 'Project Path (blank = workspace)', required: false },
@@ -1231,15 +1179,18 @@ async function executeToolForm(e) {
     document.getElementById('result-output').textContent = '';
     document.getElementById('tool-result').style.display = 'none';
     
-    // Use WebSocket streaming for run_command — gives live output
-    if (toolName === 'run_command' && authToken) {
+    // run_command always goes via HTTP relay to the user's connected machine.
+    // WebSocket streaming is disabled — relay returns full output at once.
+    if (false && toolName === 'run_command' && authToken) {
         const ws = getStreamWS();
         if (ws) {
             showLoading(`Running command...`);
+            document.getElementById('tool-result').style.display = 'block';
             const output = await streamCommand(params.command, params.cwd);
             hideLoading();
             if (output !== null) {
-                showToast('Command finished', output && !output.includes('❌') ? 'success' : 'warning');
+                const hasError = output.includes('❌') || output.includes('BLOCKED');
+                showToast(hasError ? 'Command failed' : 'Command finished', hasError ? 'error' : 'success');
                 return;
             }
             // Fall through to HTTP if WS failed
@@ -1406,45 +1357,92 @@ async function loadMachinesView() {
     container.innerHTML = '<p style="color:var(--t2);font-size:13px">Loading…</p>';
 
     try {
-        const data = await fetchAPI('/api/machines');
-        const machines = data.machines || [];
+        const [machinesData, autodetectData] = await Promise.all([
+            fetchAPI('/api/machines'),
+            fetchAPI('/api/machines/autodetect').catch(() => ({ machines: [] })),
+        ]);
+        const machines = machinesData.machines || [];
+        const adMap = {};
+        (autodetectData.machines || []).forEach(m => { adMap[m.machine_id] = m.autodetect || {}; });
 
         if (!machines.length) {
             container.innerHTML = `
 <div style="text-align:center;padding:24px 8px">
   <div style="font-size:36px;margin-bottom:10px">💻</div>
   <div style="font-size:15px;font-weight:600;color:var(--t1);margin-bottom:6px">No machines registered</div>
-  <div style="font-size:12px;color:var(--t2);margin-bottom:16px">Run the vscars CLI on your laptop to connect it.</div>
+  <div style="font-size:12px;color:var(--t2);margin-bottom:16px">Install the CLI on your laptop and run <code>vscars start</code>.</div>
   <div style="background:var(--g2);border:1px solid var(--b1);border-radius:10px;padding:14px 16px;text-align:left;font-family:monospace;font-size:12px;color:var(--t1);max-width:320px;margin:0 auto 12px">
-    curl -fsSL \"${serverUrl}/static/install-connector.sh\" | bash<br>vscars init<br>vscars start
+    pip install vscars-cli<br>vscars init<br>vscars start
   </div>
-  <div style="font-size:11px;color:var(--t2)">Server URL to use during init: <code>${serverUrl}</code></div>
-  <div style="margin-top:8px"><a href=\"/setup\" target=\"_blank\" rel=\"noopener\" style=\"font-size:12px;color:var(--t2)\">Open full setup guide</a></div>
+  <div style="font-size:11px;color:var(--t2)">Server: <code>${serverUrl}</code></div>
 </div>`;
             return;
         }
 
-        container.innerHTML = machines.map(m => `
-<div style="background:var(--g2);border:1px solid var(--b1);border-radius:12px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;gap:12px">
-  <div style="font-size:28px">${m.os_info && m.os_info.toLowerCase().includes('win') ? '🪟' : m.os_info && m.os_info.toLowerCase().includes('linux') ? '🐧' : '🍎'}</div>
-  <div style="flex:1;min-width:0">
-    <div style="font-size:14px;font-weight:600;color:var(--t1)">${m.name}</div>
-    <div style="font-size:11px;color:var(--t2)">${m.hostname || ''} · ${m.os_info || ''}</div>
-    <div style="font-size:11px;color:var(--t2)">Last seen: ${m.last_seen_at ? new Date(m.last_seen_at).toLocaleString() : 'Never'}</div>
-  </div>
+        container.innerHTML = machines.map(m => {
+            const ad = adMap[m.machine_id] || {};
+            const gitRepos = ad.git_repos || [];
+            const agents = ad.agents || [];
+            const workspace = ad.workspace || '';
+
+            const adSection = m.is_connected && (workspace || gitRepos.length || agents.length) ? `
+<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--b1)">
+  <div style="font-size:11px;font-weight:700;color:var(--t2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Auto-detected</div>
+  ${workspace ? `
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+    <span style="font-size:11px;color:var(--t2)">📁 Workspace:</span>
+    <code style="font-size:11px;color:var(--t1);background:var(--g3);padding:2px 6px;border-radius:4px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(workspace)}</code>
+    <button onclick="setWorkspaceFromMachine('${escapeHtml(workspace)}')" style="font-size:10px;padding:2px 8px;background:var(--a);color:#000;border:none;border-radius:4px;cursor:pointer;white-space:nowrap;font-weight:600">Use this</button>
+  </div>` : ''}
+  ${gitRepos.length ? `
+  <div style="margin-bottom:6px">
+    <span style="font-size:11px;color:var(--t2)">🌿 Git repos found (${gitRepos.length}):</span>
+    <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">
+      ${gitRepos.slice(0,5).map(r => `<code style="font-size:10px;color:var(--t1);background:var(--g3);padding:2px 6px;border-radius:4px;cursor:pointer" onclick="setWorkspaceFromMachine('${escapeHtml(r)}')" title="Use as workspace">${escapeHtml(r.split('/').slice(-2).join('/'))}</code>`).join('')}
+      ${gitRepos.length > 5 ? `<span style="font-size:10px;color:var(--t2)">+${gitRepos.length-5} more</span>` : ''}
+    </div>
+  </div>` : ''}
+  ${agents.length ? `
   <div>
-    <span style="font-size:10px;padding:3px 8px;border-radius:10px;font-weight:700;background:${m.is_connected ? '#22c55e22' : 'var(--g3)'};color:${m.is_connected ? '#22c55e' : 'var(--t2)'}">
-      ${m.is_connected ? '● Online' : '○ Offline'}
-    </span>
+    <span style="font-size:11px;color:var(--t2)">🛠 Detected tools: </span>
+    <span style="font-size:11px;color:var(--t1)">${agents.join(', ')}</span>
+  </div>` : ''}
+</div>` : '';
+
+            return `
+<div style="background:var(--g2);border:1px solid var(--b1);border-radius:12px;padding:14px 16px;margin-bottom:10px">
+  <div style="display:flex;align-items:center;gap:12px">
+    <div style="font-size:28px">${m.os_info && m.os_info.toLowerCase().includes('win') ? '🪟' : m.os_info && m.os_info.toLowerCase().includes('linux') ? '🐧' : '🍎'}</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:14px;font-weight:600;color:var(--t1)">${escapeHtml(m.name)}</div>
+      <div style="font-size:11px;color:var(--t2)">${escapeHtml(m.hostname || '')} · ${escapeHtml(m.os_info || '')}</div>
+      <div style="font-size:11px;color:var(--t2)">Last seen: ${m.last_seen_at ? new Date(m.last_seen_at).toLocaleString() : 'Never'}</div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+      <span style="font-size:10px;padding:3px 8px;border-radius:10px;font-weight:700;background:${m.is_connected ? '#22c55e22' : 'var(--g3)'};color:${m.is_connected ? '#22c55e' : 'var(--t2)'}">
+        ${m.is_connected ? '● Online' : '○ Offline'}
+      </span>
+      <button onclick="deleteMachine('${m.machine_id}')" style="background:none;border:none;color:var(--t2);cursor:pointer;font-size:13px;padding:2px" title="Remove machine">✕ Remove</button>
+    </div>
   </div>
-  <button onclick="deleteMachine('${m.machine_id}')" style="background:none;border:none;color:var(--t2);cursor:pointer;font-size:16px;padding:4px" title="Remove machine">✕</button>
-</div>`).join('');
+  ${adSection}
+</div>`;
+        }).join('');
 
     } catch (e) {
-        const isFree = e.status === 403;
-        container.innerHTML = isFree
-            ? `<div style="text-align:center;padding:20px 12px"><div style="font-size:32px">🖥️</div><div style="font-size:14px;font-weight:600;color:var(--t1);margin-top:10px;margin-bottom:6px">Connect your machine</div><div style="font-size:12px;color:var(--t2);margin-bottom:4px">Install the VSCARS CLI on your dev machine to unlock file access, terminal, and git tools.</div><div style="font-size:11px;color:var(--muted);margin-bottom:16px">During beta, machine access is invite-only. <a href="mailto:pm10182000@gmail.com" style="color:var(--a)">Request access →</a></div></div>`
-            : `<p style="color:var(--t2);font-size:13px">Failed to load machines.</p>`;
+        container.innerHTML = `<p style="color:var(--t2);font-size:13px">Failed to load machines.</p>`;
+    }
+}
+
+async function setWorkspaceFromMachine(path) {
+    try {
+        await fetchAPI('/api/settings/workspace', {
+            method: 'POST',
+            body: JSON.stringify({ workspace_path: path })
+        });
+        showToast(`Workspace set to ${path}`, 'success');
+    } catch (e) {
+        showToast('Failed to set workspace', 'error');
     }
 }
 
@@ -1502,6 +1500,100 @@ async function saveGitHubToken() {
         hideLoading();
         showToast(`Error: ${error.message}`, 'error');
     }
+}
+
+// ==================== AI PROVIDER SETTINGS ====================
+
+async function loadAISettings() {
+    const statusEl = document.getElementById('ai-settings-status');
+    try {
+        const result = await fetchAPI('/api/settings/ai');
+        if (result.has_key && result.provider) window._aiProvider = result.provider;
+        if (statusEl) {
+            if (result.has_key) {
+                statusEl.innerHTML = `<span style="color:var(--success)">&#10003; Configured (${escapeHtml(result.provider || 'unknown')})</span>`;
+            } else {
+                statusEl.innerHTML = `<span style="color:var(--error)">&#10007; Not configured — AI tools disabled</span>`;
+            }
+        }
+        // Populate fields
+        const providerEl = document.getElementById('ai-provider-select');
+        const modelEl = document.getElementById('ai-model-input');
+        const baseUrlEl = document.getElementById('ai-base-url-input');
+        if (providerEl && result.provider) providerEl.value = result.provider;
+        if (modelEl) modelEl.value = result.model || '';
+        if (baseUrlEl) baseUrlEl.value = result.base_url || '';
+        _updateAIBaseUrlVisibility();
+    } catch (e) { /* ignore */ }
+}
+
+function _updateAIBaseUrlVisibility() {
+    const providerEl = document.getElementById('ai-provider-select');
+    const baseUrlRow = document.getElementById('ai-base-url-row');
+    if (!providerEl || !baseUrlRow) return;
+    const showUrl = ['groq', 'together', 'ollama', 'custom'].includes(providerEl.value);
+    baseUrlRow.style.display = showUrl ? '' : 'none';
+}
+
+async function saveAISettings() {
+    const providerEl = document.getElementById('ai-provider-select');
+    const keyEl = document.getElementById('ai-key-input');
+    const modelEl = document.getElementById('ai-model-input');
+    const baseUrlEl = document.getElementById('ai-base-url-input');
+
+    const provider = providerEl ? providerEl.value : 'anthropic';
+    const api_key = keyEl ? keyEl.value.trim() : '';
+    const model = modelEl ? modelEl.value.trim() : '';
+    const base_url = baseUrlEl ? baseUrlEl.value.trim() : '';
+
+    if (!api_key) {
+        showToast('Please enter your API key', 'warning');
+        return;
+    }
+
+    showLoading('Saving AI settings...');
+    try {
+        const result = await fetchAPI('/api/settings/ai', {
+            method: 'POST',
+            body: JSON.stringify({ provider, api_key, model: model || null, base_url: base_url || null })
+        });
+        hideLoading();
+        if (result.success) {
+            showToast(`AI provider saved: ${result.provider}`, 'success');
+            if (keyEl) keyEl.value = '';
+            loadAISettings();
+            checkAIConfigured();
+        } else {
+            showToast(result.error || 'Failed to save AI settings', 'error');
+        }
+    } catch (error) {
+        hideLoading();
+        showToast(`Error: ${error.message}`, 'error');
+    }
+}
+
+async function removeAIKey() {
+    showLoading('Removing AI key...');
+    try {
+        await fetchAPI('/api/settings/ai', { method: 'DELETE' });
+        hideLoading();
+        showToast('AI key removed', 'success');
+        loadAISettings();
+        checkAIConfigured();
+    } catch (error) {
+        hideLoading();
+        showToast(`Error: ${error.message}`, 'error');
+    }
+}
+
+async function checkAIConfigured() {
+    try {
+        const result = await fetchAPI('/api/settings/ai');
+        const bannerEl = document.getElementById('ai-not-configured-banner');
+        if (bannerEl) {
+            bannerEl.style.display = result.has_key ? 'none' : '';
+        }
+    } catch (e) { /* ignore */ }
 }
 
 // ==================== WORKSPACE PATH ====================
@@ -1704,7 +1796,6 @@ async function resetAllHistory() {
             showToast(`🗑️ ${result.message}`, 'success');
             // Refresh all views
             loadConversations();
-            loadActivityLog();
         } else {
             showToast(result.error || 'Reset failed', 'error');
         }
@@ -1871,83 +1962,6 @@ function openFile(filepath) {
     }, 100);
 }
 
-// ==================== ADMIN PANEL ====================
-
-async function loadAdminPanel() {
-    if (!currentUser.is_superuser) {
-        showToast('Admin access denied', 'error');
-        return;
-    }
-    
-    try {
-        // Load pending requests
-        const requestsResponse = await fetchAPI('/api/access/pending-requests');
-        const pendingRequests = document.getElementById('pending-requests');
-        
-        if (!requestsResponse.pending_requests || requestsResponse.pending_requests.length === 0) {
-            pendingRequests.innerHTML = '<p class="placeholder">✓ No pending requests</p>';
-        } else {
-            pendingRequests.innerHTML = requestsResponse.pending_requests.map(req => `
-                <div class="request-item pending">
-                    <p><strong>ID:</strong> ${req.id}</p>
-                    <p><strong>Type:</strong> ${req.request_type}</p>
-                    <p><strong>Created:</strong> ${new Date(req.created_at).toLocaleString()}</p>
-                    ${req.qr_code_data ? `<img src="data:image/png;base64,${req.qr_code_data}" alt="QR Code" style="max-width: 150px; margin: 10px 0; border-radius: 8px;">` : ''}
-                    <div class="request-actions">
-                        <button class="btn-approve" onclick="approveRequest(${req.id})">✓ Approve</button>
-                        <button class="btn-reject" onclick="rejectRequest(${req.id})">✕ Reject</button>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        // Load users list
-        const response = await fetchAPI('/api/auth/me');
-        loadUsersList();
-    } catch (error) {
-        console.error('Error loading admin panel:', error);
-        showToast('Error loading admin panel', 'error');
-    }
-}
-
-async function approveRequest(requestId) {
-    showLoading('Approving request...');
-    
-    try {
-        await fetchAPI(`/api/access/approve/${requestId}`, { method: 'POST' });
-        hideLoading();
-        showToast('✓ Request approved!', 'success');
-        loadAdminPanel();
-    } catch (error) {
-        hideLoading();
-        showToast(error.message, 'error');
-    }
-}
-
-async function rejectRequest(requestId) {
-    showLoading('Rejecting request...');
-    
-    try {
-        await fetchAPI(`/api/access/reject/${requestId}`, { method: 'POST' });
-        hideLoading();
-        showToast('✓ Request rejected!', 'success');
-        loadAdminPanel();
-    } catch (error) {
-        hideLoading();
-        showToast(error.message, 'error');
-    }
-}
-
-async function loadUsersList() {
-    try {
-        // This would load from a users endpoint
-        const usersList = document.getElementById('users-list');
-        usersList.innerHTML = '<p class="placeholder">👤 Users management coming soon</p>';
-    } catch (error) {
-        console.error('Error loading users list:', error);
-    }
-}
-
 // ==================== NGROK ====================
 
 async function loadNgrokStatus() {
@@ -2089,95 +2103,6 @@ function copyApiKey() {
         document.execCommand('copy');
         showToast('API key copied', 'success');
     });
-}
-
-async function loadActivityLog() {
-    try {
-        const response = await fetchAPI('/api/tools/history');
-        const logContainer = document.getElementById('activity-log');
-        
-        if (!response.history || response.history.length === 0) {
-            logContainer.innerHTML = '<p class="placeholder">📭 No activity yet</p>';
-            return;
-        }
-        
-        logContainer.innerHTML = response.history.map((log, index) => {
-            const timestamp = new Date(log.timestamp);
-            const timeStr = timestamp.toLocaleString();
-            const statusIcon = log.status === 'success' ? '✅' : '❌';
-            const device = log.device || 'Unknown';
-            const action = escapeHtml(log.action || '');
-            const result = escapeHtml(log.result || '');
-            
-            return `
-                <div class="activity-item ${escapeHtml(log.status)}" onclick="toggleActivityDetail(this)" role="button" tabindex="0">
-                    <div class="activity-header">
-                        <span class="activity-status">${statusIcon}</span>
-                        <span class="activity-tool">${escapeHtml(log.tool)}</span>
-                        <span class="activity-time">${timeStr}</span>
-                        <span class="activity-expand">▶</span>
-                    </div>
-                    <div class="activity-body" style="display: none;">
-                        <p class="activity-action"><strong>Action:</strong> ${action}</p>
-                        <pre class="activity-result">${result}</pre>
-                        <p class="activity-device">📱 ${escapeHtml(device)}</p>
-                        <button class="btn-copy-sm" onclick="event.stopPropagation(); copyToClipboard('${result.replace(/'/g, "\\'")}')">📋 Copy Result</button>
-                    </div>
-                </div>
-            `;
-        }).join('');
-    } catch (error) {
-        document.getElementById('activity-log').innerHTML = `
-            <p class="placeholder">⚠️ Error loading activity: ${escapeHtml(error.message)}</p>
-        `;
-    }
-}
-
-function toggleActivityDetail(el) {
-    const body = el.querySelector('.activity-body');
-    const expand = el.querySelector('.activity-expand');
-    if (body.style.display === 'none') {
-        body.style.display = 'block';
-        expand.textContent = '▼';
-        el.classList.add('expanded');
-    } else {
-        body.style.display = 'none';
-        expand.textContent = '▶';
-        el.classList.remove('expanded');
-    }
-}
-
-async function loadExecutionLogs() {
-    try {
-        const response = await fetchAPI('/api/tools/execution-log?lines=200');
-        const logsContainer = document.getElementById('execution-logs-display');
-        
-        if (response.status !== 'success' || !response.logs || response.logs.length === 0) {
-            logsContainer.innerHTML = '<p class="placeholder">📭 No execution logs available yet</p>';
-            return;
-        }
-        
-        const logsHtml = `
-            <div class="logs-header">
-                <p class="logs-info">📊 Total Lines: ${response.total_lines} | Displayed: ${response.displayed_lines}</p>
-                <p class="logs-path">📁 Log File: ${response.log_file}</p>
-            </div>
-            <div class="logs-content">
-                <pre class="logs-text">${response.logs.map(line => escapeHtml(line)).join('\n')}</pre>
-            </div>
-        `;
-        
-        logsContainer.innerHTML = logsHtml;
-    } catch (error) {
-        document.getElementById('execution-logs-display').innerHTML = `
-            <p class="placeholder">⚠️ Error loading execution logs: ${error.message}</p>
-        `;
-    }
-}
-
-function clearExecutionLogs() {
-    // This just refreshes the view, clearing the cache display
-    loadExecutionLogs();
 }
 
 async function loadConversations() {
@@ -2367,10 +2292,7 @@ const PLAN_COLORS = {
 };
 
 const PLAN_FEATURES = {
-    free:        ['5 AI requests/day (your own API key)', 'Full terminal access on your machine', 'Files, git, workflows — unlimited', 'Connect your machine via vscars CLI'],
-    pro:         ['1000 AI requests/day', 'Everything in Beta', 'Priority support'],
-    team:        ['Unlimited AI requests', 'Multi-user + multi-machine', 'Shared workspace + audit log'],
-    self_hosted: ['Self-hosted relay', 'Unlimited everything', 'One-time or monthly license'],
+    beta: ['15 AI requests/day', 'Full terminal access on your machine', 'Files, git — unlimited', 'Connect your machine via vscars CLI'],
 };
 
 async function loadBillingStatus() {
@@ -2450,22 +2372,6 @@ function _renderPricingCards(containerId, currentPlan, compact = false) {
     </div>`;
 }
 
-async function startCheckout(planKey) {
-    showLoading('Redirecting to checkout...');
-    try {
-        const data = await fetchAPI('/api/billing/checkout', {
-            method: 'POST',
-            body: JSON.stringify({ plan: planKey }),
-        });
-        hideLoading();
-        if (data.checkout_url) {
-            window.location.href = data.checkout_url;
-        }
-    } catch (e) {
-        hideLoading();
-        showToast(e.message || 'Checkout failed', 'error');
-    }
-}
 
 async function activateLicense() {
     const input = document.getElementById('license-key-input');
@@ -2495,17 +2401,6 @@ async function activateLicense() {
     }
 }
 
-async function openBillingPortal() {
-    showLoading('Opening billing portal...');
-    try {
-        const data = await fetchAPI('/api/billing/portal');
-        hideLoading();
-        window.open(data.portal_url, '_blank');
-    } catch (e) {
-        hideLoading();
-        showToast(e.message || 'Could not open billing portal', 'error');
-    }
-}
 
 function showUpgradeModal(detail) {
     const modal = document.getElementById('upgrade-modal');
@@ -2664,6 +2559,7 @@ function obFinish() {
     document.getElementById('onboarding-modal').style.display = 'none';
     loadBillingStatus();
     checkGitHubToken();
+    checkAIConfigured();
 }
 
 // ==================== VSCARS NEW FEATURES v11.0 ====================
@@ -2712,13 +2608,9 @@ async function loadMorningBrief() {
         const el = (id) => document.getElementById(id);
         if (el('brief-commands')) el('brief-commands').textContent = data.commands_today ?? '0';
         if (el('brief-ideas'))    el('brief-ideas').textContent    = data.ideas_pending ?? '0';
-        const planLabels = {free:'Free',pro:'Pro',team:'Team',self_hosted:'Self-Hosted'};
-        if (el('brief-plan')) el('brief-plan').textContent = planLabels[data.plan] || (data.plan || 'Free');
+        if (el('brief-plan')) el('brief-plan').textContent = 'Beta';
         if (el('dash-git-status')) el('dash-git-status').textContent = data.git_status || '(no git repo)';
 
-        // workflows count from cache if available
-        const cachedWf = JSON.parse(localStorage.getItem('vscars_workflows') || '[]');
-        if (el('brief-workflows')) el('brief-workflows').textContent = cachedWf.length;
     } catch (e) {
         // non-fatal — widgets just stay at '—'
     }
@@ -2792,6 +2684,7 @@ function renderScrumColumn(targetId, items) {
                         <option value="review" ${item.status === 'review' ? 'selected' : ''}>Review</option>
                         <option value="done" ${item.status === 'done' ? 'selected' : ''}>Done</option>
                     </select>
+                    ${item.item_type === 'story' && item.status !== 'done' ? `<button class="btn-sm" onclick="runStoryPipeline(${item.id})" style="background:var(--a);color:#000" title="Run AI pipeline for this story">&#9654; Run pipeline</button>` : ''}
                     <button class="btn-sm btn-danger" onclick="deleteScrumItem(${item.id})">Delete</button>
                 </div>
             </article>`;
@@ -2924,6 +2817,24 @@ async function deleteScrumItem(id) {
     }
 }
 
+async function runStoryPipeline(storyId) {
+    showLoading('Starting agent pipeline...');
+    try {
+        const data = await fetchAPI(`/api/scrum/items/${storyId}/run`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        });
+        hideLoading();
+        showToast(`Pipeline started — ${data.pending_tasks} tasks queued`, 'success');
+        loadScrumBoard();
+        // Switch to agent sessions view to watch progress
+        switchView('agent');
+    } catch (e) {
+        hideLoading();
+        showToast(e.message || 'Failed to start pipeline', 'error');
+    }
+}
+
 async function startScrumRunner() {
     const payload = {
         project_path: (document.getElementById('scrum-runner-project-path')?.value || '').trim(),
@@ -2983,11 +2894,16 @@ function renderIdeas() {
     list.innerHTML = ideas.map(idea => {
         const tags = idea.tags ? idea.tags.split(',').map(t => `<span class="idea-tag">${escapeHtml(t.trim())}</span>`).join('') : '';
         const timeStr = new Date(idea.created_at).toLocaleDateString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+        const alreadyBrokenDown = idea.tags && idea.tags.includes('epic:');
+        const makeItHappenBtn = !idea.is_done
+            ? `<button onclick="breakdownIdea(${idea.id})" class="btn-sm" title="Break down with AI" style="background:var(--a);color:#000">${alreadyBrokenDown ? 'Re-plan' : 'Make it happen'} →</button>`
+            : '';
         return `
         <div class="idea-card ${idea.is_done ? 'done' : ''}" id="idea-card-${idea.id}">
             <div class="idea-card-head">
                 <span class="idea-card-title">${idea.title ? escapeHtml(idea.title) : '&#128161; Idea'}</span>
                 <div class="idea-actions">
+                    ${makeItHappenBtn}
                     <button onclick="toggleIdeaDone(${idea.id}, ${!idea.is_done})" class="btn-sm" title="${idea.is_done ? 'Mark pending' : 'Mark shipped'}">${idea.is_done ? '↩' : '✓'}</button>
                     <button onclick="deleteIdea(${idea.id})" class="btn-sm btn-danger" title="Delete">×</button>
                 </div>
@@ -2999,6 +2915,22 @@ function renderIdeas() {
             </div>
         </div>`;
     }).join('');
+}
+
+async function breakdownIdea(ideaId) {
+    showLoading('AI is breaking down your idea into tasks...');
+    try {
+        const data = await fetchAPI(`/api/ideas/${ideaId}/breakdown`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        });
+        hideLoading();
+        showToast(data.message || 'Breakdown complete! Check the Scrum board.', 'success');
+        loadIdeas();
+    } catch (e) {
+        hideLoading();
+        showToast(e.message || 'Breakdown failed', 'error');
+    }
 }
 
 async function saveIdea() {
@@ -3195,119 +3127,6 @@ async function doCommitAndPush() {
     }
 }
 
-// ==================== SAVED WORKFLOWS ====================
-
-let _workflows = [];
-let _selectedIcon = '⚡';
-
-function selectIcon(el) {
-    document.querySelectorAll('.icon-opt').forEach(o => o.classList.remove('selected'));
-    el.classList.add('selected');
-    _selectedIcon = el.dataset.icon;
-}
-
-function toggleAddWorkflow() {
-    const form = document.getElementById('add-workflow-form');
-    if (!form) return;
-    const isOpen = form.classList.contains('open');
-    form.classList.toggle('open', !isOpen);
-    const btn = document.getElementById('add-wf-btn');
-    if (btn) btn.textContent = isOpen ? '+ New Workflow' : '✕ Cancel';
-}
-
-async function loadWorkflows() {
-    try {
-        const data = await fetchAPI('/api/workflows');
-        _workflows = data.workflows || [];
-        localStorage.setItem('vscars_workflows', JSON.stringify(_workflows));
-        renderWorkflows();
-        const el = document.getElementById('brief-workflows');
-        if (el) el.textContent = _workflows.length;
-    } catch (e) {
-        document.getElementById('workflow-grid').innerHTML = '<p class="placeholder">Could not load workflows</p>';
-    }
-}
-
-function renderWorkflows() {
-    const grid = document.getElementById('workflow-grid');
-    if (!grid) return;
-    if (!_workflows.length) {
-        grid.innerHTML = '<p class="placeholder">&#128640; No workflows yet.<br>Save your most-used commands as one-tap shortcuts.</p>';
-        return;
-    }
-    grid.innerHTML = _workflows.map(wf => `
-        <div class="workflow-card" id="wf-card-${wf.id}">
-            <button class="workflow-del-btn" onclick="deleteWorkflow(event, ${wf.id})" title="Delete">×</button>
-            <div class="workflow-icon">${escapeHtml(wf.icon || '⚡')}</div>
-            <div class="workflow-name">${escapeHtml(wf.name)}</div>
-            <div class="workflow-cmd" title="${escapeHtml(wf.command)}">${escapeHtml(wf.command)}</div>
-            <div class="workflow-meta">
-                <span>${wf.run_count || 0} runs</span>
-                <span>${wf.last_run_at ? new Date(wf.last_run_at).toLocaleDateString() : 'never'}</span>
-            </div>
-            <button onclick="runWorkflow(${wf.id})" class="workflow-run-btn">&#9654; Run</button>
-        </div>
-    `).join('');
-}
-
-async function saveWorkflow() {
-    const name    = document.getElementById('wf-name')?.value.trim();
-    const command = document.getElementById('wf-command')?.value.trim();
-    const cwd     = document.getElementById('wf-cwd')?.value.trim();
-    if (!name || !command) { showToast('Name and command are required', 'warning'); return; }
-    try {
-        const wf = await fetchAPI('/api/workflows', {
-            method: 'POST',
-            body: JSON.stringify({ name, command, cwd: cwd || null, icon: _selectedIcon })
-        });
-        _workflows.unshift(wf);
-        localStorage.setItem('vscars_workflows', JSON.stringify(_workflows));
-        renderWorkflows();
-        toggleAddWorkflow();
-        // clear form
-        ['wf-name','wf-command','wf-cwd'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-        showToast('Workflow saved!', 'success');
-    } catch (e) {
-        showToast('Save failed: ' + e.message, 'error');
-    }
-}
-
-async function runWorkflow(id) {
-    const wf = _workflows.find(w => w.id === id);
-    if (!wf) return;
-    showLoading(`Running: ${wf.name}...`);
-    try {
-        const data = await fetchAPI(`/api/workflows/${id}/run`, { method: 'POST' });
-        hideLoading();
-        const output = data.result || data.output || data.error || '(no output)';
-        document.getElementById('result-output').textContent = output;
-        document.getElementById('tool-result').style.display = 'block';
-        document.getElementById('tool-modal').classList.add('open');
-        document.getElementById('modal-title').textContent = `⚡ ${wf.name}`;
-        // update run count locally
-        const idx = _workflows.findIndex(w => w.id === id);
-        if (idx >= 0) { _workflows[idx].run_count = (wf.run_count || 0) + 1; renderWorkflows(); }
-        showToast(`${wf.name} finished`, data.success !== false ? 'success' : 'warning');
-    } catch (e) {
-        hideLoading();
-        showToast('Workflow error: ' + e.message, 'error');
-    }
-}
-
-async function deleteWorkflow(e, id) {
-    e.stopPropagation();
-    if (!confirm('Delete this workflow?')) return;
-    try {
-        await fetchAPI(`/api/workflows/${id}`, { method: 'DELETE' });
-        _workflows = _workflows.filter(w => w.id !== id);
-        localStorage.setItem('vscars_workflows', JSON.stringify(_workflows));
-        renderWorkflows();
-        showToast('Workflow deleted', 'info');
-    } catch (e) {
-        showToast('Delete failed', 'error');
-    }
-}
-
 // ==================== SESSIONS ====================
 
 async function loadSessions() {
@@ -3353,7 +3172,6 @@ switchView = function(viewName) {
     _origSwitchView(viewName);
     if (viewName === 'ideas')     { loadIdeas(); }
     if (viewName === 'git')       { loadGitPanel(); }
-    if (viewName === 'workflows') { loadWorkflows(); }
     if (viewName === 'settings')  { loadSessions(); loadAgentSessions(); }
 };
 
@@ -3571,7 +3389,6 @@ function showSkeleton(containerId, rows = 3) {
         const staggerMap = {
             dashboard: '.action-grid',
             ideas: '#ideas-list',
-            workflows: '#workflows-list',
             git: '.git-panel-inner',
         };
         if (staggerMap[viewName]) {
@@ -3611,7 +3428,7 @@ function showSkeleton(containerId, rows = 3) {
         await _prev();
         // after brief loads, animate the numbers
         requestAnimationFrame(() => {
-            ['brief-commands','brief-ideas','brief-workflows'].forEach(id => {
+            ['brief-commands','brief-ideas'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el && el.textContent.trim() !== '—') {
                     animateCounter(el, el.textContent.trim());
@@ -3629,7 +3446,7 @@ function showSkeleton(containerId, rows = 3) {
 // ── TAB LABEL UPDATE ────────────────────────────────────────
 const VIEW_LABELS = {
   dashboard:'Home', ideas:'Idea Vault', git:'Git Panel',
-  tools:'Terminal', workflows:'Workflows', 'file-browser':'Files',
+  tools:'Terminal', 'file-browser':'Files',
   conversations:'AI Chat', 'agent-inbox':'Agent Inbox', activity:'Logs', settings:'Settings',
   billing:'Plan & Billing', admin:'Admin',
 };

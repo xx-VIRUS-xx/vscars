@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VSCARS Feature Picker</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0a0f; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; padding: 24px 16px; max-width: 700px; margin: 0 auto; }
+h1 { font-size: 22px; font-weight: 800; color: #a78bfa; margin-bottom: 4px; }
+.sub { color: #64748b; font-size: 13px; margin-bottom: 28px; line-height: 1.5; }
+.section { margin-bottom: 24px; }
+.section-title { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: .8px; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #1e1e2e; display: flex; justify-content: space-between; }
+.select-all { font-size: 11px; color: #a78bfa; cursor: pointer; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.item-wrap { margin-bottom: 6px; }
+.item { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: background .15s; }
+.item:hover { background: #12121a; }
+.item input[type=checkbox] { margin-top: 2px; accent-color: #a78bfa; width: 16px; height: 16px; flex-shrink: 0; cursor: pointer; }
+.item-label { flex: 1; }
+.item-name { font-weight: 600; color: #e2e8f0; font-size: 13px; }
+.item-desc { color: #64748b; font-size: 11px; margin-top: 2px; }
+.note-toggle { font-size: 10px; color: #475569; cursor: pointer; margin-left: 12px; padding: 2px 6px; border-radius: 4px; border: 1px solid #1e1e2e; background: none; transition: color .15s, border-color .15s; }
+.note-toggle:hover { color: #a78bfa; border-color: #a78bfa; }
+.note-wrap { display: none; padding: 0 12px 10px 40px; }
+.note-wrap textarea { width: 100%; background: #0a0a0f; border: 1px solid #2d2d3e; border-radius: 6px; color: #e2e8f0; font-size: 12px; padding: 8px 10px; resize: vertical; min-height: 60px; font-family: inherit; line-height: 1.5; }
+.note-wrap textarea:focus { outline: none; border-color: #a78bfa; }
+.note-wrap textarea::placeholder { color: #334155; font-style: italic; }
+.btn { width: 100%; padding: 14px; background: #a78bfa; color: #000; border: none; border-radius: 10px; font-size: 15px; font-weight: 700; cursor: pointer; margin-top: 8px; }
+.btn:hover { background: #c4b5fd; }
+.output { display: none; margin-top: 24px; background: #12121a; border: 1px solid #1e1e2e; border-radius: 12px; padding: 20px; }
+.output h3 { font-size: 14px; font-weight: 700; color: #a78bfa; margin-bottom: 12px; }
+.output pre { color: #94a3b8; font-size: 12px; white-space: pre-wrap; line-height: 1.7; }
+.copy-btn { margin-top: 12px; padding: 8px 18px; background: #1e1e2e; color: #e2e8f0; border: 1px solid #2d2d3e; border-radius: 8px; font-size: 12px; cursor: pointer; }
+.copy-btn:hover { background: #2d2d3e; }
+</style>
+</head>
+<body>
+
+<h1>VSCARS Feature Picker</h1>
+<p class="sub">
+  ✅ <b>Tick</b> features you want to keep.<br>
+  ✏️ Click <b>"+ note"</b> under any ticked feature to clarify how it should work.<br>
+  ❌ <b>Unticked</b> features will be removed entirely.
+</p>
+
+<form id="picker"></form>
+
+<button type="button" class="btn" onclick="generate()">Generate Feature List</button>
+
+<div class="output" id="output">
+  <h3>Your feature spec</h3>
+  <pre id="output-text"></pre>
+  <button class="copy-btn" onclick="copyOutput()">Copy to clipboard</button>
+</div>
+
+<script>
+const FEATURES = [
+  { section: "Auth & Account", items: [
+    { id: "auth_register_login", name: "Register / Login", desc: "Email + password auth, JWT sessions", default: true },
+    { id: "auth_forgot_password", name: "Forgot password / Reset via email", desc: "Sends reset link via Resend", default: false },
+    { id: "auth_sessions", name: "Session management", desc: "View and revoke active login sessions", default: false },
+    { id: "auth_api_key", name: "API key generation", desc: "User generates a key to authenticate the CLI", default: true },
+  ]},
+  { section: "Machine & Relay", items: [
+    { id: "machine_register", name: "Machine registration", desc: "vscars init — links CLI to account", default: true },
+    { id: "machine_status", name: "Machine online/offline status", desc: "Shows which machines are currently connected", default: true },
+    { id: "machine_autodetect", name: "Auto-detect workspace & tools on connect", desc: "CLI sends workspace path, git repos, installed tools on connect", default: true },
+    { id: "machine_multi", name: "Multi-machine support", desc: "Connect and switch between multiple machines", default: false },
+  ]},
+  { section: "Terminal", items: [
+    { id: "terminal_run", name: "Run commands", desc: "Execute shell commands relayed to your machine", default: true },
+    { id: "terminal_stream", name: "Live streaming output", desc: "Real-time stdout/stderr via WebSocket", default: false },
+    { id: "terminal_workflows", name: "Saved workflows", desc: "One-tap named command shortcuts", default: false },
+    { id: "terminal_history", name: "Command history log", desc: "View past commands and their output", default: false },
+  ]},
+  { section: "Files", items: [
+    { id: "files_browse", name: "Browse directory", desc: "Navigate your filesystem from the app", default: true },
+    { id: "files_read", name: "Read file", desc: "View file contents in the app", default: true },
+    { id: "files_create", name: "Create file", desc: "Create new files on your machine", default: false },
+    { id: "files_edit", name: "Edit file", desc: "Edit file contents from the app", default: false },
+    { id: "files_delete", name: "Delete file", desc: "Delete files on your machine", default: false },
+    { id: "files_vscode", name: "Open in VS Code", desc: "Trigger VS Code to open a file at a line", default: false },
+  ]},
+  { section: "Git", items: [
+    { id: "git_status", name: "Git status & diff", desc: "See branch, staged/unstaged changes", default: true },
+    { id: "git_stage", name: "Stage / unstage files", desc: "git add / git restore --staged", default: false },
+    { id: "git_commit", name: "Commit & push", desc: "Commit with message and push to remote", default: true },
+    { id: "git_ai_commit", name: "AI commit message generator", desc: "Generate commit message from diff using AI", default: false },
+    { id: "git_log", name: "Git log", desc: "View recent commit history", default: false },
+  ]},
+  { section: "AI Chat", items: [
+    { id: "ai_chat", name: "AI chat (Anthropic / OpenAI)", desc: "Chat with Claude or GPT using your own API key", default: true },
+    { id: "ai_history", name: "Chat history", desc: "View past AI conversations", default: false },
+    { id: "ai_byok", name: "Bring your own API key", desc: "User configures their own Anthropic/OpenAI key in Settings", default: true },
+    { id: "ai_copilot_agent", name: "Copilot agent (runs gh copilot on machine)", desc: "Runs the GitHub Copilot CLI agent on your machine", default: false },
+  ]},
+  { section: "Productivity", items: [
+    { id: "prod_ideas", name: "Idea vault", desc: "Capture thoughts, tag, mark done", default: false },
+    { id: "prod_brief", name: "Morning brief / dashboard widgets", desc: "Commands today, pending ideas, git status", default: false },
+    { id: "prod_scrum", name: "Scrum / kanban board", desc: "Task tracking board", default: false },
+    { id: "prod_agent_sessions", name: "Agent sessions & notifications", desc: "Long-running AI task sessions with progress", default: false },
+  ]},
+  { section: "Security", items: [
+    { id: "sec_blocklist", name: "Command blocklist", desc: "Blocks rm -rf /, fork bombs, etc.", default: true },
+    { id: "sec_approval", name: "Approval gates", desc: "Require approval before running sensitive commands", default: false },
+    { id: "sec_trust", name: "Trust policy profiles (safe/balanced/power)", desc: "Per-user command execution policy", default: false },
+    { id: "sec_qr", name: "QR code access requests", desc: "Request access by scanning a QR code", default: false },
+  ]},
+  { section: "Billing", items: [
+    { id: "billing_stripe", name: "Stripe checkout & billing portal", desc: "Paid plans, subscription management", default: false },
+    { id: "billing_plans", name: "Plan limits enforcement", desc: "Gate features by free/pro/team plan", default: false },
+    { id: "billing_license", name: "License key system", desc: "HMAC-signed keys for self-hosted tier", default: false },
+  ]},
+  { section: "Admin", items: [
+    { id: "admin_permissions", name: "User permissions management", desc: "Superuser can set per-user feature access", default: false },
+    { id: "admin_activity", name: "Activity log", desc: "All tool executions logged with status", default: false },
+  ]},
+  { section: "Pages & Misc", items: [
+    { id: "misc_landing", name: "Landing page", desc: "Public marketing page at /", default: true },
+    { id: "misc_setup", name: "Setup / onboarding wizard", desc: "Step-by-step first-run guide for new users", default: false },
+    { id: "misc_debug", name: "Debug dashboard", desc: "Live relay state, tool call testing", default: false },
+    { id: "misc_install", name: "CLI install script (/install)", desc: "curl | bash installer for the CLI", default: true },
+    { id: "misc_pwa", name: "PWA (installable on mobile home screen)", desc: "Add to home screen, offline manifest", default: false },
+  ]},
+];
+
+const form = document.getElementById('picker');
+FEATURES.forEach(section => {
+  const sec = document.createElement('div');
+  sec.className = 'section';
+  sec.innerHTML = `<div class="section-title">${section.section} <span class="select-all" data-section>select all</span></div>`;
+
+  section.items.forEach(item => {
+    const wrap = document.createElement('div');
+    wrap.className = 'item-wrap';
+    wrap.innerHTML = `
+      <div style="display:flex;align-items:center">
+        <label class="item" style="flex:1">
+          <input type="checkbox" name="feature" value="${item.id}" ${item.default ? 'checked' : ''} onchange="onCheck(this)">
+          <div class="item-label">
+            <div class="item-name">${item.name}</div>
+            <div class="item-desc">${item.desc}</div>
+          </div>
+        </label>
+        <button type="button" class="note-toggle" onclick="toggleNote(this)" style="${item.default ? '' : 'opacity:.4;pointer-events:none'}">+ note</button>
+      </div>
+      <div class="note-wrap" id="note-${item.id}">
+        <textarea name="note_${item.id}" placeholder="Leave blank to keep as-is. Write here to change how this feature works…"></textarea>
+      </div>
+    `;
+    sec.appendChild(wrap);
+  });
+
+  sec.querySelector('[data-section]').addEventListener('click', function() {
+    const boxes = sec.querySelectorAll('input[type=checkbox]');
+    const allChecked = Array.from(boxes).every(b => b.checked);
+    boxes.forEach(b => { b.checked = !allChecked; onCheck(b); });
+    this.textContent = allChecked ? 'select all' : 'deselect all';
+  });
+
+  form.appendChild(sec);
+});
+
+function onCheck(checkbox) {
+  const wrap = checkbox.closest('.item-wrap');
+  const toggle = wrap.querySelector('.note-toggle');
+  const noteWrap = wrap.querySelector('.note-wrap');
+  if (checkbox.checked) {
+    toggle.style.opacity = '1';
+    toggle.style.pointerEvents = 'auto';
+  } else {
+    toggle.style.opacity = '.4';
+    toggle.style.pointerEvents = 'none';
+    noteWrap.style.display = 'none';
+    toggle.textContent = '+ note';
+  }
+}
+
+function toggleNote(btn) {
+  const wrap = btn.closest('.item-wrap');
+  const noteWrap = wrap.querySelector('.note-wrap');
+  const open = noteWrap.style.display === 'block';
+  noteWrap.style.display = open ? 'none' : 'block';
+  btn.textContent = open ? '+ note' : '− note';
+  if (!open) noteWrap.querySelector('textarea').focus();
+}
+
+function generate() {
+  const items = document.querySelectorAll('input[name=feature]');
+  const keep = [], remove = [];
+  items.forEach(cb => {
+    const wrap = cb.closest('.item-wrap');
+    const name = wrap.querySelector('.item-name').textContent;
+    const note = (wrap.querySelector('textarea') || {}).value || '';
+    if (cb.checked) keep.push({ name, note: note.trim() });
+    else remove.push(name);
+  });
+
+  let out = '=== KEEP ===\n';
+  keep.forEach(({ name, note }) => {
+    out += `✅ ${name}`;
+    if (note) out += `\n   → ${note.replace(/\n/g, '\n     ')}`;
+    out += '\n';
+  });
+  out += '\n=== REMOVE ENTIRELY ===\n';
+  remove.forEach(name => { out += `❌ ${name}\n`; });
+
+  document.getElementById('output-text').textContent = out;
+  document.getElementById('output').style.display = 'block';
+  document.getElementById('output').scrollIntoView({ behavior: 'smooth' });
+}
+
+function copyOutput() {
+  navigator.clipboard.writeText(document.getElementById('output-text').textContent);
+}
+</script>
+</body>
+</html>

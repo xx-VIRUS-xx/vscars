@@ -62,16 +62,19 @@ def cmd_init(args):
         server_url = (answer or default_url).rstrip("/")
 
     # API key
-    print()
-    print("Your API key is in the app under Plan & Billing → Generate API Key.")
-    print(f"  → {server_url}/app")
-    print()
     existing_key = existing.get("api_key", "")
-    if existing_key:
-        print(f"  (current key: {existing_key[:12]}…  press Enter to keep)")
-    api_key = input("API Key: ").strip()
-    if not api_key and existing_key:
-        api_key = existing_key
+    if getattr(args, "api_key", None):
+        api_key = args.api_key
+    else:
+        print()
+        print("Your API key is in the app under Settings → API Key → Generate.")
+        print(f"  → {server_url}/app")
+        print()
+        if existing_key:
+            print(f"  (current key: {existing_key[:12]}…  press Enter to keep)")
+        api_key = input("API Key: ").strip()
+        if not api_key and existing_key:
+            api_key = existing_key
     if not api_key:
         print("❌ API key required. Get yours at: " + server_url)
         sys.exit(1)
@@ -93,7 +96,10 @@ def cmd_init(args):
     # Machine details
     machine_id = existing.get("machine_id") or str(uuid.uuid4())
     default_name = existing.get("machine_name") or platform.node()
-    name = input(f"\nMachine name [{default_name}]: ").strip() or default_name
+    if getattr(args, "machine_name", None):
+        name = args.machine_name
+    else:
+        name = input(f"\nMachine name [{default_name}]: ").strip() or default_name
 
     # Register machine
     print("Registering machine…")
@@ -231,6 +237,8 @@ def main():
 
     p_init = sub.add_parser("init", help="Register this machine with your account")
     p_init.add_argument("--server", default=None, help=f"Server URL (default: {DEFAULT_SERVER})")
+    p_init.add_argument("--api-key", default=None, dest="api_key", help="Your VSCARS API key")
+    p_init.add_argument("--name", default=None, dest="machine_name", help="Machine name (skips prompt)")
     sub.add_parser("start", help="Start the agent (connects to relay)")
     sub.add_parser("stop", help="Stop a running agent")
     sub.add_parser("status", help="Show status")

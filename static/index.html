@@ -13,7 +13,7 @@
 </head>
 <body>
 <div id="beta-banner" style="background:linear-gradient(90deg,#7c3aed,#06b6d4);color:#fff;text-align:center;padding:7px 16px;font-size:12px;font-weight:500;letter-spacing:0.3px;position:relative;z-index:999;">
-  🚀 <strong>VSCARS Beta</strong> — 5 AI requests/day free. Connect your machine for full access.
+  🚀 <strong>VSCARS Beta</strong> — 15 AI requests/day free. Connect your machine for full access.
   <span onclick="document.getElementById('beta-banner').style.display='none'" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;opacity:0.8;">✕</span>
 </div>
 <canvas id="vscars-canvas"></canvas>
@@ -101,17 +101,12 @@
       style="font-family:var(--mono);font-size:13px;font-weight:700">⑂</button>
     <button class="nav-item" data-view="tools"         title="Terminal"
       style="font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:-1px">$_</button>
-    <button class="nav-item" data-view="workflows"     title="Workflows"
-      style="font-size:15px">⬡</button>
     <button class="nav-item" data-view="file-browser"  title="Files"
       style="font-size:15px">⊞</button>
     <button class="nav-item" data-view="conversations" title="Chat"
       style="font-size:14px">⊘</button>
     <button class="nav-item" data-view="agent-inbox" title="Agent Inbox"
       style="font-size:14px">✉</button>
-    <button class="nav-item" data-view="activity"      title="Logs"
-      style="font-family:var(--mono);font-size:12px;font-weight:700">≣</button>
-
     <div class="actbar-spacer"></div>
     <div class="actbar-divider"></div>
 
@@ -121,8 +116,6 @@
       style="font-size:15px">⊛</button>
     <button class="nav-item" data-view="billing"  title="Plan"
       style="font-size:14px">◬</button>
-    <button class="nav-item" id="admin-nav" data-view="admin" title="Admin"
-      style="font-size:14px">⊕</button>
 
     <div class="actbar-user">
       <div class="actbar-avatar" id="actbar-avatar" title="Signed in">?</div>
@@ -179,11 +172,6 @@
             <div class="stat-label brief-card-label">Ideas pending</div>
           </div>
           <div class="stat-card brief-card">
-            <div class="brief-card-icon stat-icon">⟳</div>
-            <div class="stat-val brief-card-val" id="brief-workflows">—</div>
-            <div class="stat-label brief-card-label">Saved workflows</div>
-          </div>
-          <div class="stat-card brief-card">
             <div class="brief-card-icon stat-icon">◇</div>
             <div class="stat-val brief-card-val" id="brief-plan">—</div>
             <div class="stat-label brief-card-label">Active plan</div>
@@ -220,11 +208,6 @@
                 <span class="ac-icon">▶</span>
                 <span class="ac-name">Run Command</span>
                 <span class="ac-sub">Shell exec</span>
-              </button>
-              <button onclick="switchView('workflows')" class="action-card">
-                <span class="ac-icon">⟳</span>
-                <span class="ac-name">Workflows</span>
-                <span class="ac-sub">One-tap scripts</span>
               </button>
               <button onclick="quickChat()" class="action-card">
                 <span class="ac-icon">◎</span>
@@ -310,8 +293,6 @@
             <h3>Secondary Features</h3>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
               <button onclick="switchView('ideas')" class="btn-sm">Ideas</button>
-              <button onclick="switchView('workflows')" class="btn-sm">Workflows</button>
-              <button onclick="switchView('activity')" class="btn-sm">Activity</button>
               <button onclick="switchView('agent-inbox')" class="btn-sm">Agent Inbox</button>
             </div>
 
@@ -447,30 +428,6 @@
       </div>
 
       <!-- ─── WORKFLOWS ─── -->
-      <div id="workflows-view" class="view">
-        <div class="view-head">
-          <h2>Workflows</h2>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 260px;gap:20px;align-items:start">
-          <div id="workflows-list" class="workflow-list"></div>
-          <div class="s-group">
-            <h3>New Workflow</h3>
-            <input type="text" id="wf-name-input"  placeholder="Name"           style="margin-bottom:7px">
-            <input type="text" id="wf-cmd-input"   placeholder="Command"        style="margin-bottom:7px;font-family:var(--mono);font-size:12px">
-            <input type="text" id="wf-cwd-input"   placeholder="Working dir"    style="margin-bottom:7px;font-family:var(--mono);font-size:12px">
-            <select id="wf-icon-select" style="margin-bottom:12px">
-              <option value="▶">▶ Run</option>
-              <option value="🧪">🧪 Test</option>
-              <option value="📦">📦 Build</option>
-              <option value="🚀">🚀 Deploy</option>
-              <option value="🔧">🔧 Config</option>
-              <option value="🧹">🧹 Clean</option>
-              <option value="⚡">⚡ Fast</option>
-            </select>
-            <button onclick="saveWorkflow()" class="btn-sm btn-accent" style="width:100%;padding:8px 0">Save Workflow</button>
-          </div>
-        </div>
-      </div>
 
       <!-- ─── FILES ─── -->
       <div id="file-browser-view" class="view">
@@ -535,18 +492,13 @@
         </div>
       </div>
 
-      <!-- ─── ACTIVITY ─── -->
-      <div id="activity-view" class="view">
-        <div class="view-head">
-          <h2>Activity Log</h2>
-          <button onclick="loadActivityLog()" class="btn-sm">↻ Refresh</button>
-        </div>
-        <div id="activity-log" class="activity-list"><p class="muted sm">Loading…</p></div>
-      </div>
 
       <!-- ─── SETTINGS ─── -->
       <div id="settings-view" class="view">
         <div class="view-head"><h2>Settings</h2></div>
+        <div id="ai-not-configured-banner" style="display:none;background:var(--warn,#7c5a00);color:#fff;padding:10px 16px;border-radius:8px;margin-bottom:12px;font-size:13px">
+          &#9888; Add your AI API key below to use AI features (Ask AI, Ask Copilot).
+        </div>
         <div class="settings-groups">
 
           <section class="s-group">
@@ -570,6 +522,38 @@
             <div class="s-row" style="margin-top:8px">
               <input type="password" id="github-token-input" placeholder="ghp_…">
               <button onclick="saveGitHubToken()" class="btn-sm">Save</button>
+            </div>
+          </section>
+
+          <section class="s-group">
+            <h3>AI Keys</h3>
+            <p class="muted sm" id="ai-settings-status">Checking…</p>
+            <div class="s-row" style="margin-top:8px">
+              <label class="muted sm" style="min-width:70px;display:flex;align-items:center">Provider</label>
+              <select id="ai-provider-select" onchange="_updateAIBaseUrlVisibility()" style="flex:1">
+                <option value="anthropic">Anthropic (Claude)</option>
+                <option value="openai">OpenAI (GPT)</option>
+                <option value="groq">Groq</option>
+                <option value="together">Together AI</option>
+                <option value="ollama">Ollama (local)</option>
+                <option value="custom">Custom (OpenAI-compatible)</option>
+              </select>
+            </div>
+            <div class="s-row" style="margin-top:8px">
+              <label class="muted sm" style="min-width:70px;display:flex;align-items:center">API Key</label>
+              <input type="password" id="ai-key-input" placeholder="sk-… (leave blank to keep existing)" style="flex:1">
+            </div>
+            <div class="s-row" style="margin-top:8px">
+              <label class="muted sm" style="min-width:70px;display:flex;align-items:center">Model</label>
+              <input type="text" id="ai-model-input" placeholder="leave blank for default" style="flex:1">
+            </div>
+            <div id="ai-base-url-row" class="s-row" style="margin-top:8px;display:none">
+              <label class="muted sm" style="min-width:70px;display:flex;align-items:center">Base URL</label>
+              <input type="text" id="ai-base-url-input" placeholder="https://api.groq.com/openai/v1" style="flex:1">
+            </div>
+            <div class="s-row" style="margin-top:10px">
+              <button onclick="saveAISettings()" class="btn-sm">Save</button>
+              <button onclick="removeAIKey()" class="btn-sm" style="background:var(--error,#c0392b);color:#fff">Remove Key</button>
             </div>
           </section>
 
@@ -742,19 +726,6 @@
       </div>
 
       <!-- ─── ADMIN ─── -->
-      <div id="admin-view" class="view">
-        <div class="view-head"><h2>Admin</h2></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-          <section class="s-group">
-            <h3>Pending Access Requests</h3>
-            <div id="pending-requests" style="margin-top:8px"><p class="muted sm">Loading…</p></div>
-          </section>
-          <section class="s-group">
-            <h3>Users</h3>
-            <div id="users-list" style="margin-top:8px"><p class="muted sm">Loading…</p></div>
-          </section>
-        </div>
-      </div>
 
     </div><!-- .views -->
   </div><!-- .panel -->
@@ -795,11 +766,9 @@
     <button class="mob-drawer-item nav-item" data-view="ideas">✦<span>Ideas</span></button>
     <button class="mob-drawer-item nav-item" data-view="git">⎇<span>Git</span></button>
     <button class="mob-drawer-item nav-item" data-view="tools">›_<span>Terminal</span></button>
-    <button class="mob-drawer-item nav-item" data-view="workflows">⬡<span>Workflows</span></button>
     <button class="mob-drawer-item nav-item" data-view="file-browser">⊞<span>Files</span></button>
     <button class="mob-drawer-item nav-item" data-view="conversations">⊘<span>AI Chat</span></button>
     <button class="mob-drawer-item nav-item" data-view="agent-inbox">✉<span>Agent Inbox</span></button>
-    <button class="mob-drawer-item nav-item" data-view="activity">≣<span>Activity</span></button>
     <button class="mob-drawer-item nav-item" data-view="machines">⬡<span>Machines</span></button>
     <button class="mob-drawer-item nav-item" data-view="settings">⊛<span>Settings</span></button>
     <button class="mob-drawer-item nav-item" data-view="billing">◬<span>Plan</span></button>
@@ -865,7 +834,7 @@
         <span style="font-size:20px">🤖</span>
         <div>
           <div style="font-size:13px;font-weight:600;color:var(--t1)">AI Chat — works now</div>
-          <div style="font-size:12px;color:var(--t2);margin-top:2px">Ask anything. Uses your API key or GitHub Copilot. 5 requests/day in beta.</div>
+          <div style="font-size:12px;color:var(--t2);margin-top:2px">Ask anything. Uses your API key or GitHub Copilot. 15 requests/day in beta.</div>
         </div>
       </div>
       <div style="background:var(--g2);border-radius:10px;padding:12px 14px;display:flex;align-items:flex-start;gap:12px">
