@@ -126,6 +126,10 @@ def cmd_init(args):
     reg = r.json()
     machine_token = reg["token"]
 
+    # Default workspace = directory where `vscars init` was run
+    default_workspace = os.path.realpath(os.getcwd())
+    ws_file = cfg.CONFIG_DIR / "workspace.txt"
+
     # Save config
     cfg.save({
         "server_url": server_url,
@@ -133,9 +137,15 @@ def cmd_init(args):
         "machine_id": machine_id,
         "machine_name": name,
         "machine_token": machine_token,
+        "workspace": default_workspace,
     })
 
+    # Write workspace file for executor to pick up immediately
+    cfg.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    ws_file.write_text(default_workspace)
+
     print(f"\n✅ Machine '{name}' registered!")
+    print(f"   Default workspace: {default_workspace}")
     print(f"   Config: {cfg.CONFIG_FILE}")
     print()
     print("▶  Run `vscars start` to connect your machine.")
@@ -143,8 +153,82 @@ def cmd_init(args):
 
 def cmd_start(args):
     """Start the agent (runs in foreground; use a service manager for background)."""
+    import shutil
+
+    # --- Auto-setup prompt ---
+    missing = []
+    if not shutil.which("claude"):
+        missing.append("Claude Code  (npm install -g @anthropic-ai/claude-code)")
+    if not shutil.which("copilot"):
+        missing.append("Copilot CLI  (npm install -g @github/copilot)")
+    if not shutil.which("codex") and not shutil.which("codex-cli"):
+        missing.append("Codex CLI    (npm install -g @openai/codex)")
+
+    # Detect locally-running inference servers (Ollama, LM Studio, llama.cpp)
+    local_agents = []
+    for port, label in [(11434, "Ollama :11434"), (1234, "LM Studio :1234"), (8080, "llama.cpp :8080")]:
+        import socket as _sock
+        try:
+            with _sock.create_connection(("127.0.0.1", port), timeout=0.5):
+                local_agents.append(label)
+        except OSError:
+            pass
+
+    if local_agents:
+        print(f"🤖 Local inference detected: {', '.join(local_agents)}")
+
+    if missing:
+        print()
+        print("⚠  Missing AI agents:")
+        for m in missing:
+            print(f"   • {m}")
+        print()
+        try:
+            answer = input("Auto-install missing agents now? [Y/n]: ").strip().lower()
+        except EOFError:
+            answer = "n"
+        if answer in ("", "y", "yes"):
+            _run_agent_setup()
+        else:
+            print("Skipping — you can run `vscars setup` later.")
+    print()
+
     from vscars.agent import start
     start()
+
+
+def _run_agent_setup():
+    """Install missing AI agents non-interactively."""
+    import shutil, subprocess, platform as _platform
+    sys_name = _platform.system()
+
+    # Claude Code
+    if not shutil.which("claude"):
+        if shutil.which("npm"):
+            print("⬇  Installing Claude Code…")
+            r = subprocess.run(["npm", "install", "-g", "@anthropic-ai/claude-code"],
+                               capture_output=False, timeout=120)
+            print("✅ Claude Code installed." if r.returncode == 0 else "❌ Claude Code install failed — check npm.")
+        else:
+            print("⚠  npm not found — install Node.js first to get Claude Code: https://nodejs.org")
+
+    # Copilot CLI
+    if not shutil.which("copilot"):
+        if shutil.which("npm"):
+            print("⬇  Installing Copilot CLI…")
+            r = subprocess.run(["npm", "install", "-g", "@github/copilot"],
+                               capture_output=False, timeout=120)
+            print("✅ Copilot CLI installed." if r.returncode == 0 else "❌ Copilot CLI install failed.")
+        else:
+            print("⚠  npm not found — install Node.js to get Copilot CLI: https://nodejs.org")
+
+    # Codex CLI
+    if not shutil.which("codex") and not shutil.which("codex-cli"):
+        if shutil.which("npm"):
+            print("⬇  Installing Codex CLI…")
+            r = subprocess.run(["npm", "install", "-g", "@openai/codex"],
+                               capture_output=False, timeout=120)
+            print("✅ Codex CLI installed." if r.returncode == 0 else "❌ Codex CLI install failed.")
 
 
 def cmd_stop(args):
@@ -249,6 +333,8 @@ def main():
     p_ws = sub.add_parser("workspace", help="Set default workspace path")
     p_ws.add_argument("path", help="Absolute or ~ path to workspace directory")
 
+    sub.add_parser("setup", help="Detect and install missing AI agents (Claude Code, gh Copilot)")
+
     args = parser.parse_args()
 
     commands = {
@@ -258,6 +344,7 @@ def main():
         "status": cmd_status,
         "logs": cmd_logs,
         "workspace": cmd_workspace,
+        "setup": lambda _: _run_agent_setup(),
     }
     commands[args.command](args)
 

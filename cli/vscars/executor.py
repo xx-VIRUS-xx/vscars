@@ -122,8 +122,10 @@ def delete_file(filepath: str) -> str:
         return f"❌ Error: {e}"
 
 
-def list_files(directory: str = ".", path: str = None) -> str:
-    if path and directory == ".":
+def list_files(directory: str = ".", path: str = None, dirpath: str = None) -> str:
+    if dirpath and directory == ".":
+        directory = dirpath
+    elif path and directory == ".":
         directory = path
     try:
         directory = _resolve(directory)
@@ -211,7 +213,11 @@ def git_command(command: str, repo_path: Optional[str] = None) -> str:
         return f"❌ git error: {e}"
 
 
-def search_files(query: str, directory: str = ".") -> str:
+def search_files(query: str = "", directory: str = ".", pattern: str = None, search_path: str = None, file_type: str = None) -> str:
+    if pattern and not query:
+        query = pattern
+    if search_path and directory == ".":
+        directory = search_path
     try:
         directory = _resolve(directory)
         matches = []
@@ -334,7 +340,9 @@ def ask_agent(prompt: str, agent: str = "claude", project_path: Optional[str] = 
         return f"❌ Agent error: {e}"
 
 
-def open_terminal(path: Optional[str] = None) -> str:
+def open_terminal(path: Optional[str] = None, cwd: Optional[str] = None) -> str:
+    if cwd and not path:
+        path = cwd
     target = _resolve(path) if path else _get_workspace()
     try:
         if platform.system() == "Darwin":

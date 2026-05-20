@@ -209,13 +209,22 @@ class VSCodeTools:
                 cwd=work_dir
             )
             
-            stdout = result.stdout[:5000] if result.stdout else ""
-            stderr = result.stderr[:2000] if result.stderr else ""
-            output = stdout or stderr or "(No output)"
-            
-            status = "✅ SUCCESS" if result.returncode == 0 else f"⚠️ Exit code: {result.returncode}"
-            
-            return f"{status}\n📁 CWD: {work_dir}\n\n{output}"
+            stdout = result.stdout[:8000] if result.stdout else ""
+            stderr = result.stderr[:4000] if result.stderr else ""
+            # Interleave stdout + stderr as a terminal would show them
+            output = ""
+            if stdout:
+                output += stdout
+            if stderr:
+                output += ("\n" if output else "") + stderr
+            if not output:
+                output = "(no output)"
+
+            # Clean developer-facing output: show exit code only on failure
+            if result.returncode == 0:
+                return f"$ {command}\n{output}"
+            else:
+                return f"$ {command}\n{output}\n[exit {result.returncode}]"
         except ValueError as e:
             return f"❌ ERROR: {str(e)}"
         except subprocess.TimeoutExpired:
@@ -227,7 +236,12 @@ class VSCodeTools:
     def list_files(dirpath: str = "") -> str:
         """List files in a directory (defaults to workspace)"""
         try:
-            dirpath = _resolve_path(dirpath) if dirpath else _get_workspace()
+            if not dirpath:
+                dirpath = _get_workspace()
+            elif os.path.isabs(dirpath):
+                dirpath = os.path.realpath(dirpath)
+            else:
+                dirpath = _resolve_path(dirpath)
             path = Path(dirpath)
             if not path.exists():
                 return f"❌ ERROR: Directory not found: {dirpath}"
@@ -1116,8 +1130,15 @@ class VSCodeTools:
     def browse_directory(dirpath: str = "", depth: int = 3, show_hidden: bool = False) -> str:
         """Browse a directory with a visual tree structure — navigate any project"""
         try:
-            dirpath = _resolve_path(dirpath) if dirpath else _get_workspace()
-            
+            if not dirpath:
+                dirpath = _get_workspace()
+            elif os.path.isabs(dirpath):
+                # Absolute paths are allowed for read-only browsing — just resolve symlinks.
+                # _resolve_path enforces workspace sandbox which is too strict here.
+                dirpath = os.path.realpath(dirpath)
+            else:
+                dirpath = _resolve_path(dirpath)
+
             if not os.path.isdir(dirpath):
                 return f"❌ ERROR: Directory not found: {dirpath}"
             
@@ -1266,6 +1287,93 @@ class VSCodeTools:
         except Exception as e:
             return f"❌ Error browsing directory: {str(e)}"
 
+    @staticmethod
+    def setup_agents() -> str:
+        """Detect and automatically install missing AI agents (Claude Code, gh Copilot).
+        Safe to run on any machine — skips tools that are already installed."""
+        import shutil
+        lines = ["🔍 Checking installed AI agents...\n"]
+
+        # ── Claude Code ──────────────────────────────────────────────────────
+        if shutil.which("claude"):
+            lines.append("✅ Claude Code — already installed")
+        else:
+            lines.append("⬇  Claude Code not found — installing via npm...")
+            r = subprocess.run(
+                ["npm", "install", "-g", "@anthropic-ai/claude-code"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r.returncode == 0:
+                lines.append("✅ Claude Code installed successfully")
+            else:
+                npm_err = r.stderr.strip().splitlines()[0] if r.stderr.strip() else "unknown error"
+                if not shutil.which("npm"):
+                    lines.append("❌ Claude Code — npm not found. Install Node.js first: https://nodejs.org")
+                else:
+                    lines.append(f"❌ Claude Code install failed: {npm_err}")
+
+        # ── GitHub CLI (required for gh copilot) ─────────────────────────────
+        gh_ok = bool(shutil.which("gh"))
+        if gh_ok:
+            lines.append("✅ GitHub CLI (gh) — already installed")
+        else:
+            lines.append("⬇  GitHub CLI not found — installing...")
+            system = platform.system()
+            if system == "Darwin":
+                r = subprocess.run(["brew", "install", "gh"], capture_output=True, text=True, timeout=180)
+                gh_ok = r.returncode == 0
+            elif system == "Linux":
+                # Try apt-get (Debian/Ubuntu)
+                r = subprocess.run(
+                    ["bash", "-c",
+                     "type apt-get &>/dev/null && "
+                     "apt-get install -y gh 2>/dev/null || "
+                     "(curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg "
+                     "| dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && "
+                     "echo 'deb [arch=$(dpkg --print-architecture) "
+                     "signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] "
+                     "https://cli.github.com/packages stable main' "
+                     "| tee /etc/apt/sources.list.d/github-cli.list > /dev/null && "
+                     "apt-get update && apt-get install -y gh)"],
+                    capture_output=True, text=True, timeout=180,
+                )
+                gh_ok = r.returncode == 0
+            else:
+                lines.append("⚠  GitHub CLI — auto-install not supported on Windows. Install manually: https://cli.github.com")
+            if gh_ok:
+                lines.append("✅ GitHub CLI installed successfully")
+            elif system in ("Darwin", "Linux"):
+                lines.append("❌ GitHub CLI install failed — install manually: https://cli.github.com")
+
+        # ── gh copilot extension ──────────────────────────────────────────────
+        if gh_ok:
+            ext_check = subprocess.run(
+                ["gh", "extension", "list"], capture_output=True, text=True, timeout=15
+            )
+            if "copilot" in ext_check.stdout.lower():
+                lines.append("✅ gh copilot extension — already installed")
+            else:
+                lines.append("⬇  gh copilot extension not found — installing...")
+                r = subprocess.run(
+                    ["gh", "extension", "install", "github/gh-copilot", "--force"],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if r.returncode == 0:
+                    lines.append("✅ gh copilot extension installed")
+                else:
+                    err = r.stderr.strip().splitlines()[0] if r.stderr.strip() else "unknown"
+                    if "not logged" in err.lower() or "auth" in err.lower():
+                        lines.append("⚠  gh copilot — not logged in. Run: gh auth login")
+                    else:
+                        lines.append(f"❌ gh copilot install failed: {err}")
+        else:
+            lines.append("⏭  gh copilot — skipped (gh CLI unavailable)")
+
+        # ── Summary ───────────────────────────────────────────────────────────
+        lines.append("\n✅ Agent setup complete. Run `vscars start` if the agent isn't already running.")
+        return "\n".join(lines)
+
+
 # Tool definitions
 TOOLS = [
     {
@@ -1333,6 +1441,12 @@ TOOLS = [
         "description": "📂 Visual directory tree browser with project detection",
         "required_permission": "view",
         "handler": VSCodeTools.browse_directory
+    },
+    {
+        "name": "setup_agents",
+        "description": "🔧 Auto-install missing AI agents (Claude Code, gh Copilot) on this machine",
+        "required_permission": "commands",
+        "handler": VSCodeTools.setup_agents
     },
     {
         "name": "ask_copilot",

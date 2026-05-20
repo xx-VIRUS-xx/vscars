@@ -99,8 +99,6 @@
       style="font-size:14px;font-weight:700;letter-spacing:-1px">◈</button>
     <button class="nav-item" data-view="git"           title="Git"
       style="font-family:var(--mono);font-size:13px;font-weight:700">⑂</button>
-    <button class="nav-item" data-view="tools"         title="Terminal"
-      style="font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:-1px">$_</button>
     <button class="nav-item" data-view="file-browser"  title="Files"
       style="font-size:15px">⊞</button>
     <button class="nav-item" data-view="conversations" title="Chat"
@@ -282,7 +280,6 @@
           <aside class="s-group">
             <h3>Core Workspace</h3>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
-              <button onclick="switchView('tools')" class="btn-sm">Terminal</button>
               <button onclick="switchView('file-browser')" class="btn-sm">Files</button>
               <button onclick="switchView('conversations')" class="btn-sm">AI Chat</button>
               <button onclick="switchView('git')" class="btn-sm">Git</button>
@@ -410,22 +407,6 @@
         </div>
       </div>
 
-      <!-- ─── TOOLS / TERMINAL ─── -->
-      <div id="tools-view" class="view">
-        <div class="view-head">
-          <h2>Terminal</h2>
-          <span id="ws-path-display" class="muted mono sm" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
-        </div>
-        <p id="permissions-status" class="muted sm" style="margin-bottom:10px"></p>
-        <div class="cmd-row">
-          <span class="cmd-prompt">›</span>
-          <input type="text" id="cmd-input" placeholder="command to run"
-            autocomplete="off" spellcheck="false">
-          <button onclick="runCommand()"  class="btn-sm btn-accent">Run</button>
-          <button onclick="stopCommand()" class="btn-sm btn-danger">Stop</button>
-        </div>
-        <div id="cmd-output" class="terminal-output" style="height:calc(100vh - 255px);min-height:200px"></div>
-      </div>
 
       <!-- ─── WORKFLOWS ─── -->
 
@@ -765,7 +746,6 @@
     <button class="mob-drawer-item nav-item" data-view="scrum">☰<span>Scrum</span></button>
     <button class="mob-drawer-item nav-item" data-view="ideas">✦<span>Ideas</span></button>
     <button class="mob-drawer-item nav-item" data-view="git">⎇<span>Git</span></button>
-    <button class="mob-drawer-item nav-item" data-view="tools">›_<span>Terminal</span></button>
     <button class="mob-drawer-item nav-item" data-view="file-browser">⊞<span>Files</span></button>
     <button class="mob-drawer-item nav-item" data-view="conversations">⊘<span>AI Chat</span></button>
     <button class="mob-drawer-item nav-item" data-view="agent-inbox">✉<span>Agent Inbox</span></button>

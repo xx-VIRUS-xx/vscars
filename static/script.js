@@ -894,7 +894,6 @@ function showTool(toolName) {
         git_status: { repo_path: { type: 'text', label: 'Repo Path (blank = workspace)', required: false } },
         git_command: { command: { type: 'text', label: 'Git Command (e.g. add . / commit -m "msg" / push)', required: true }, repo_path: { type: 'text', label: 'Repo Path (blank = workspace)', required: false } },
         create_project: { project_name: { type: 'text', label: 'Project Name', required: true }, project_type: { type: 'text', label: 'Type (python/node/react/flask/fastapi)', required: false }, parent_dir: { type: 'text', label: 'Parent Dir (blank = workspace)', required: false }, copilot_prompt: { type: 'textarea', label: '🤖 Copilot Setup Prompt (optional — AI will build your project)', required: false } },
-        open_terminal: { cwd: { type: 'text', label: 'Terminal Path (blank = workspace)', required: false } },
         get_workspace_info: {},
         ask_agent: {
             prompt: { type: 'textarea', label: 'Ask Agent prompt', required: true },
@@ -977,7 +976,7 @@ async function openCopilotAgentTool(prefillModel) {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
             <div>
                 <label>Project Path <span class="muted" style="font-weight:400">(blank = workspace)</span></label>
-                <input type="text" name="project_path" placeholder="~/PY/myproject" style="font-family:var(--mono);font-size:12px">
+                <input type="text" name="project_path" placeholder="blank = workspace" style="font-family:var(--mono);font-size:12px" data-ws-placeholder="true">
             </div>
             <div>
                 <label>Permissions</label>
@@ -1041,9 +1040,20 @@ async function openAskAgentTool(prefillAgent = 'copilot', prefillModel = '') {
     const activeModel = (activeSession?.model || '').trim();
     const selectedAgent = defaults[activeAgent] ? activeAgent : (defaults[lastAgent] ? lastAgent : (defaults[prefillAgent] ? prefillAgent : 'copilot'));
     const selectedModel = prefillModel || activeModel || lastModel || defaults[selectedAgent];
-    const modelOptions = models.map(m =>
-        `<option value="${m.id}" ${m.id === selectedModel ? 'selected' : ''}>${m.label}${m.speed ? ` — ${m.speed}` : ''}</option>`
-    ).join('');
+
+    function modelsForAgent(ag) {
+        return models.filter(m => !m.agents || m.agents.includes(ag));
+    }
+    function buildModelOptions(ag, currentModel) {
+        const filtered = modelsForAgent(ag);
+        const pick = (filtered.find(m => m.id === currentModel) ? currentModel : null)
+            || filtered.find(m => m.id === defaults[ag])?.id
+            || filtered[0]?.id || '';
+        return { html: filtered.map(m =>
+            `<option value="${m.id}" ${m.id === pick ? 'selected' : ''}>${m.label}${m.speed ? ` — ${m.speed}` : ''}</option>`
+        ).join(''), selected: pick };
+    }
+    const { html: modelOptions } = buildModelOptions(selectedAgent, selectedModel);
 
     const agentOptions = agentChoices.map(a =>
         `<option value="${a.value}" ${a.value === selectedAgent ? 'selected' : ''}>${a.label}</option>`
@@ -1083,7 +1093,7 @@ async function openAskAgentTool(prefillAgent = 'copilot', prefillModel = '') {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
             <div>
                 <label>Project Path <span class="muted" style="font-weight:400">(blank = workspace)</span></label>
-                <input type="text" name="project_path" placeholder="~/PY/myproject" style="font-family:var(--mono);font-size:12px">
+                <input type="text" name="project_path" placeholder="blank = workspace" style="font-family:var(--mono);font-size:12px" data-ws-placeholder="true">
             </div>
             <div>
                 <label>Permissions</label>
@@ -1101,9 +1111,8 @@ async function openAskAgentTool(prefillAgent = 'copilot', prefillModel = '') {
     if (agentSelect && modelSelect) {
         agentSelect.addEventListener('change', () => {
             const ag = agentSelect.value;
-            const target = defaults[ag] || defaults.copilot;
-            const hasTarget = byId.has(target);
-            if (hasTarget) modelSelect.value = target;
+            const { html } = buildModelOptions(ag, modelSelect.value);
+            modelSelect.innerHTML = html;
         });
     }
     const sessionSelect = document.getElementById('ask-agent-session-select');
@@ -1116,8 +1125,10 @@ async function openAskAgentTool(prefillAgent = 'copilot', prefillModel = '') {
                 if (s) {
                     const a = (s.agent || '').trim().toLowerCase();
                     if (agentSelect && defaults[a]) agentSelect.value = a;
-                    if (modelSelect && s.model && byId.has(s.model)) modelSelect.value = s.model;
-                    else if (modelSelect && defaults[a] && byId.has(defaults[a])) modelSelect.value = defaults[a];
+                    if (modelSelect) {
+                        const { html } = buildModelOptions(a, s.model || defaults[a] || '');
+                        modelSelect.innerHTML = html;
+                    }
                 }
             }
         });
@@ -1603,9 +1614,18 @@ async function loadWorkspace() {
         const result = await fetchAPI('/api/settings/workspace');
         const statusEl = document.getElementById('workspace-status');
         const inputEl = document.getElementById('workspace-path-input');
-        if (statusEl && result.workspace) {
-            statusEl.innerHTML = `<span style="color:var(--success)">Current: <code style="color:var(--fg-link);background:var(--bg-input);padding:2px 6px;border-radius:3px;font-family:var(--font-mono)">${escapeHtml(result.workspace)}</code></span>`;
+        if (result.workspace) {
+            // Settings panel display
+            if (statusEl) {
+                statusEl.innerHTML = `<span style="color:var(--success)">Current: <code style="color:var(--fg-link);background:var(--bg-input);padding:2px 6px;border-radius:3px;font-family:var(--font-mono)">${escapeHtml(result.workspace)}</code></span>`;
+            }
             if (inputEl) inputEl.placeholder = result.workspace;
+            // Populate all project_path inputs with real workspace as placeholder
+            document.querySelectorAll('input[data-ws-placeholder="true"]').forEach(el => {
+                el.placeholder = result.workspace;
+            });
+            // Store globally so form renders can pick it up too
+            window._vscarsWorkspace = result.workspace;
         }
     } catch (e) {
         const statusEl = document.getElementById('workspace-status');
@@ -3446,7 +3466,7 @@ function showSkeleton(containerId, rows = 3) {
 // ── TAB LABEL UPDATE ────────────────────────────────────────
 const VIEW_LABELS = {
   dashboard:'Home', ideas:'Idea Vault', git:'Git Panel',
-  tools:'Terminal', 'file-browser':'Files',
+  'file-browser':'Files',
   conversations:'AI Chat', 'agent-inbox':'Agent Inbox', activity:'Logs', settings:'Settings',
   billing:'Plan & Billing', admin:'Admin',
 };
@@ -3577,6 +3597,12 @@ async function quickCaptureIdea() {
         // classList.add('open') was called by original — override with display
         const m = document.getElementById('tool-modal');
         if (m) { m.classList.remove('open'); m.style.display = 'flex'; }
+        // Populate project_path fields with real workspace instead of hardcoded path
+        if (window._vscarsWorkspace) {
+            document.querySelectorAll('input[data-ws-placeholder="true"]').forEach(el => {
+                el.placeholder = window._vscarsWorkspace;
+            });
+        }
     };
 })();
 

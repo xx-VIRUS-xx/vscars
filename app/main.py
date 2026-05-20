@@ -40,6 +40,7 @@ from slowapi.errors import RateLimitExceeded
 import os
 import json
 import re
+import shlex
 import threading
 import time
 
@@ -48,6 +49,7 @@ init_db()
 _SCRUM_RUNNERS = {}
 _SCRUM_RUNNER_LOCK = threading.Lock()
 _VSCARS_ROOT = os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_MAIN_LOOP: asyncio.AbstractEventLoop | None = None  # set on startup; used by background threads to relay calls
 
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -58,6 +60,11 @@ app = FastAPI(
     description="Control VS Code and Copilot from your mobile device worldwide",
     version="1.0.0"
 )
+
+@app.on_event("startup")
+async def _capture_event_loop():
+    global _MAIN_LOOP
+    _MAIN_LOOP = asyncio.get_event_loop()
 
 # Rate limit error handler
 app.state.limiter = limiter
@@ -466,21 +473,18 @@ def _update_scrum_runner_state(user_id: int, **updates) -> dict:
 
 
 def _normalize_runner_project_path(project_path: str) -> str:
+    # Path lives on the user's Mac — don't validate against EC2 filesystem.
+    # Just normalise ~ and return as-is; the Mac executor enforces its own sandbox.
     raw = (project_path or "").strip()
     if not raw:
         return ""
-    resolved = os.path.realpath(os.path.expanduser(raw))
-    if not os.path.isdir(resolved):
-        raise ValueError(f"Directory not found: {resolved}")
-    return resolved
+    return os.path.expanduser(raw)
 
 
 def _validate_runner_target(project_path: str, allow_self_work: bool) -> str:
     resolved = _normalize_runner_project_path(project_path)
     if not resolved:
         raise ValueError("Target project path is required for autonomous mode.")
-    if not allow_self_work and (resolved == _VSCARS_ROOT or resolved.startswith(_VSCARS_ROOT + os.sep)):
-        raise ValueError("Autonomous mode is blocked from working on VSCARS itself unless you enable self-work explicitly.")
     return resolved
 
 
@@ -663,7 +667,7 @@ def _run_scrum_runner(user_id: int):
             db.add(task)
             db.commit()
             db.refresh(task)
-            threading.Thread(target=_run_agent_task, args=(task.id,), daemon=True).start()
+            threading.Thread(target=_run_relay_agent_task, args=(task.id, user_id, None, _MAIN_LOOP), daemon=True).start()
             _update_scrum_runner_state(
                 user_id,
                 current_agent_task_id=task.id,
@@ -682,6 +686,85 @@ def _run_scrum_runner(user_id: int):
         finally:
             db.close()
         time.sleep(1)
+
+
+def _run_relay_agent_task(task_id: int, user_id: int, machine_id: str | None, loop: asyncio.AbstractEventLoop = None):
+    """Background runner for ask_agent / copilot_agent — relays to user's Mac via WebSocket.
+
+    Must be called from a daemon thread. Pass the uvicorn event loop so
+    run_coroutine_threadsafe can schedule the relay call on the correct loop
+    (the one that owns the WebSocket connection and _pending futures).
+    """
+    db = SessionLocal()
+    try:
+        task = db.query(AgentTask).filter(AgentTask.id == task_id).first()
+        if not task:
+            return
+
+        task.status = "running"
+        task.started_at = datetime.utcnow()
+        db.commit()
+
+        params = json.loads(task.input_params or "{}")
+
+        _loop = loop or _MAIN_LOOP
+        if _loop is None:
+            result = "❌ Relay error: event loop not available"
+            success = False
+        else:
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    _relay.call_tool(user_id, machine_id, task.tool_name, params, timeout=180.0),
+                    _loop,
+                )
+                result_data = future.result(timeout=185)
+                result = result_data.get("result", "")
+                success = result_data.get("success", True)
+            except Exception as e:
+                result = f"❌ Relay error: {e}"
+                success = False
+
+        task.status = "completed" if success else "failed"
+        task.result = str(result)[:20000]
+        task.error = None if success else str(result)[:20000]
+        task.finished_at = datetime.utcnow()
+        db.commit()
+
+        if task.agent_session_id:
+            session = db.query(AgentSession).filter(
+                AgentSession.id == task.agent_session_id,
+                AgentSession.user_id == task.user_id
+            ).first()
+            if session:
+                db.add(AgentSessionMessage(
+                    session_id=session.id, role="assistant",
+                    content=(task.result or task.error or "")[:12000],
+                ))
+                session.updated_at = datetime.utcnow()
+                session.last_task_id = task.id
+                db.commit()
+
+        db.add(CommandLog(
+            user_id=task.user_id, tool_name=task.tool_name,
+            action=f"Relay task #{task.id} finished",
+            input_params=task.input_params,
+            result=(task.result or task.error or "")[:500],
+            status="success" if success else "error",
+            device_id="relay-worker",
+        ))
+        db.commit()
+    except Exception as e:
+        try:
+            task = db.query(AgentTask).filter(AgentTask.id == task_id).first()
+            if task:
+                task.status = "failed"
+                task.error = f"❌ Relay task error: {e}"[:20000]
+                task.finished_at = datetime.utcnow()
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
 
 
 def _run_agent_task(task_id: int):
@@ -903,7 +986,7 @@ async def execute_tool_endpoint(
         db.commit()
         db.refresh(task)
 
-        threading.Thread(target=_run_agent_task, args=(task.id,), daemon=True).start()
+        threading.Thread(target=_run_relay_agent_task, args=(task.id, current_user.id, tool_input.get("machine_id"), _MAIN_LOOP), daemon=True).start()
 
         crawl_url = _crawler_url_from_request(request, task.id)
         return {
@@ -934,13 +1017,108 @@ async def execute_tool_endpoint(
                 "task_id": None, "agent_session_id": None, "crawler_url": None, "status": None,
             }
         machine_id = tool_input.get("machine_id")
+
+        # Ensure agent session exists for ask_agent so we can attach the task
+        ma_session = None
+        if tool_name == "ask_agent":
+            user_prompt = str(params.get("prompt", "") or "").strip()
+            if user_prompt:
+                # Resolve project_path: use what the caller sent, or pull from the
+                # machine's cached workspace so copilot_agent runs against the right dir.
+                project_path = str(params.get("project_path", "") or "").strip()
+                if not project_path:
+                    try:
+                        ws_cache = f"/tmp/vscars_ws_{current_user.id}.txt"
+                        with open(ws_cache) as _f:
+                            project_path = _f.read().strip()
+                    except Exception:
+                        project_path = ""
+
+                ma_session = _ensure_agent_session(
+                    db=db,
+                    user_id=current_user.id,
+                    requested_session_id=tool_input.get("agent_session_id"),
+                    agent=str(params.get("agent", "copilot") or "copilot"),
+                    model=str(params.get("model", "") or ""),
+                    project_path=project_path,
+                    allow_tools=str(params.get("allow_tools", "all") or "all"),
+                    session_name=str(tool_input.get("session_name", "") or ""),
+                )
+                if ma_session.model:
+                    params["model"] = ma_session.model
+                # Always send project_path to the machine — use session value (never empty string)
+                params["project_path"] = ma_session.project_path or project_path or ""
+                if ma_session.allow_tools:
+                    params["allow_tools"] = ma_session.allow_tools
+                params["agent"] = ma_session.agent or params.get("agent", "copilot")
+                if continue_session:
+                    params["prompt"] = _build_session_prompt(db, ma_session.id, user_prompt)
+                db.add(AgentSessionMessage(session_id=ma_session.id, role="user", content=user_prompt[:8000]))
+                ma_session.updated_at = datetime.utcnow()
+                db.commit()
+
+        # Try for up to 5s; if still running, queue as a background task so the UI
+        # gets a task ID immediately instead of showing a frozen loading screen.
+        FAST_TIMEOUT = 5.0
         try:
-            result_data = await _relay.call_tool(current_user.id, machine_id, tool_name, params, timeout=180.0)
+            result_data = await asyncio.wait_for(
+                _relay.call_tool(current_user.id, machine_id, tool_name, params, timeout=180.0),
+                timeout=FAST_TIMEOUT,
+            )
+            # Completed fast — save assistant reply and return directly
+            if ma_session:
+                db.add(AgentSessionMessage(
+                    session_id=ma_session.id, role="assistant",
+                    content=str(result_data.get("result", ""))[:12000],
+                ))
+                ma_session.updated_at = datetime.utcnow()
+                db.commit()
+            return {
+                "success": result_data.get("success", True),
+                "tool": tool_name,
+                "result": result_data.get("result", ""),
+                "agent_session_id": ma_session.id if ma_session else None,
+                "error": None, "approval_required": None, "approval_id": None,
+                "task_id": None, "crawler_url": None, "status": None,
+            }
         except ConnectionError as e:
             raise HTTPException(status_code=503, detail={"message": str(e), "code": "no_machine"})
         except asyncio.TimeoutError:
-            raise HTTPException(status_code=504, detail={"message": "Agent did not respond in time (180s).", "code": "timeout"})
-        return {"success": result_data.get("success", True), "tool": tool_name, "result": result_data.get("result", "")}
+            pass  # Took longer than 5s — queue it
+
+        # Queue as background relay task
+        task = AgentTask(
+            user_id=current_user.id,
+            tool_name=tool_name,
+            input_params=json.dumps(params),
+            status="queued",
+            created_at=datetime.utcnow(),
+            agent_session_id=ma_session.id if ma_session else None,
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        threading.Thread(
+            target=_run_relay_agent_task,
+            args=(task.id, current_user.id, machine_id, _MAIN_LOOP),
+            daemon=True,
+        ).start()
+        crawl_url = _crawler_url_from_request(request, task.id)
+        return {
+            "success": True,
+            "tool": tool_name,
+            "status": "queued",
+            "task_id": task.id,
+            "agent_session_id": ma_session.id if ma_session else None,
+            "crawler_url": crawl_url,
+            "result": (
+                f"⏳ Agent task queued: #{task.id}\n"
+                f"Your agent is running on your Mac — this usually takes 30-120s.\n"
+                f"Track progress: {crawl_url}\n"
+                f"You will get a notification when it finishes."
+            ),
+            "error": None, "approval_required": None, "approval_id": None,
+        }
 
     # All machine-permission tools must go through the relay.
     # If no machine is connected, return a clear error instead of running on the relay host.
@@ -1346,40 +1524,60 @@ async def send_agent_session_message(
         blocked_msg = blocked_msg_map.get(blocked_reason, "Execution blocked by trust policy.")
         return {"success": False, "status": "blocked", "error": blocked_msg}
 
-    if run_async:
-        task = AgentTask(
-            user_id=current_user.id,
-            tool_name="ask_agent",
-            input_params=json.dumps(params),
-            status="queued",
-            created_at=datetime.utcnow(),
-            agent_session_id=session.id,
-        )
-        db.add(task)
-        db.commit()
-        db.refresh(task)
-        threading.Thread(target=_run_agent_task, args=(task.id,), daemon=True).start()
-
-        crawl_url = _crawler_url_from_request(request, task.id)
+    # Agent CLIs only exist on the user's Mac — must relay.
+    if not _relay.is_connected(current_user.id):
         return {
-            "success": True,
-            "status": "queued",
-            "task_id": task.id,
+            "success": False, "status": "error",
             "agent_session_id": session.id,
-            "crawler_url": crawl_url,
-            "result": f"⏳ Task queued: #{task.id}",
+            "result": "❌ No machine connected. Run `vscars start` on your Mac first.",
         }
 
-    result = execute_tool("ask_agent", **params)
-    success = not str(result).startswith("❌")
-    db.add(AgentSessionMessage(session_id=session.id, role="assistant", content=str(result)[:12000]))
-    session.updated_at = datetime.utcnow()
+    machine_id = data.get("machine_id")
+
+    # Try fast path (≤5s); if still running, queue as background relay task.
+    try:
+        result_data = await asyncio.wait_for(
+            _relay.call_tool(current_user.id, machine_id, "ask_agent", params, timeout=180.0),
+            timeout=5.0,
+        )
+        result = result_data.get("result", "")
+        success = result_data.get("success", True)
+        db.add(AgentSessionMessage(session_id=session.id, role="assistant", content=str(result)[:12000]))
+        session.updated_at = datetime.utcnow()
+        db.commit()
+        return {"success": success, "status": "completed" if success else "failed",
+                "agent_session_id": session.id, "result": result}
+    except ConnectionError as e:
+        return {"success": False, "status": "error", "agent_session_id": session.id,
+                "result": f"❌ Connection error: {e}"}
+    except asyncio.TimeoutError:
+        pass  # Queue it
+
+    task = AgentTask(
+        user_id=current_user.id,
+        tool_name="ask_agent",
+        input_params=json.dumps(params),
+        status="queued",
+        created_at=datetime.utcnow(),
+        agent_session_id=session.id,
+    )
+    db.add(task)
     db.commit()
+    db.refresh(task)
+    threading.Thread(target=_run_relay_agent_task, args=(task.id, current_user.id, machine_id, _MAIN_LOOP), daemon=True).start()
+
+    crawl_url = _crawler_url_from_request(request, task.id)
     return {
-        "success": success,
-        "status": "completed" if success else "failed",
+        "success": True,
+        "status": "queued",
+        "task_id": task.id,
         "agent_session_id": session.id,
-        "result": result,
+        "crawler_url": crawl_url,
+        "result": (
+            f"⏳ Agent task queued: #{task.id}\n"
+            f"Your agent is running on your Mac — this usually takes 30-120s.\n"
+            f"You will get a notification when it finishes."
+        ),
     }
 
 @app.get("/api/tools/conversations")
@@ -1506,51 +1704,67 @@ async def check_github_token(current_user: User = Depends(get_current_user)):
 @app.post("/api/settings/workspace")
 async def save_workspace(
     data: dict,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """Save workspace path"""
+    """Relay workspace path to user's connected machine (stored in ~/.vscars/workspace.txt on Mac)."""
     path = (data.get("workspace_path") or data.get("path", "")).strip()
-    
     if not path:
         return {"success": False, "error": "Path cannot be empty"}
-    
-    path = os.path.expanduser(path)  # Support ~ notation
-    path = os.path.realpath(path)    # Resolve symlinks
-    
-    if not os.path.isdir(path):
-        return {"success": False, "error": f"Directory not found: {path}"}
-    
+
+    if not _relay.is_connected(current_user.id):
+        return {"success": False, "error": "No machine connected. Run `vscars start` first, then set your workspace."}
+
+    # Write workspace.txt on the user's Mac via relay
+    ws_file = os.path.expanduser("~/.vscars/workspace.txt")
+    cmd = f"mkdir -p ~/.vscars && echo {shlex.quote(path)} > ~/.vscars/workspace.txt"
     try:
-        with open("/tmp/jarvis_workspace.txt", "w") as f:
-            f.write(path)
-        # Reset path sandbox cache when workspace changes
-        _reset_allowed_roots()
-        return {"success": True, "workspace": path, "message": f"Workspace set to: {path}"}
+        result = await _relay.call_tool(current_user.id, None, "run_command", {"command": cmd}, timeout=15.0)
+        if not result.get("success", True):
+            return {"success": False, "error": result.get("result", "Failed to write workspace")}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+    # Cache the path server-side for display when machine is offline
+    try:
+        with open(f"/tmp/vscars_ws_{current_user.id}.txt", "w") as f:
+            f.write(path)
+    except Exception:
+        pass
+
+    return {"success": True, "workspace": path, "message": f"Workspace set to: {path}"}
+
+
 @app.get("/api/settings/workspace")
 async def get_workspace(current_user: User = Depends(get_current_user)):
-    """Get current workspace path"""
-    from app.config import WORKSPACE_PATH
-    
-    # Check runtime override
-    ws_path = WORKSPACE_PATH
-    source = "env"
+    """Get current workspace — from machine if connected, otherwise from cached value."""
+    if _relay.is_connected(current_user.id):
+        try:
+            result = await _relay.call_tool(
+                current_user.id, None, "get_workspace_info", {}, timeout=10.0
+            )
+            raw = result.get("result", "")
+            for line in raw.splitlines():
+                if line.startswith("Workspace:"):
+                    ws = line.split(":", 1)[1].strip()
+                    try:
+                        with open(f"/tmp/vscars_ws_{current_user.id}.txt", "w") as f:
+                            f.write(ws)
+                    except Exception:
+                        pass
+                    return {"workspace": ws, "source": "machine", "exists": True}
+        except Exception:
+            pass
+
+    # Fallback: last cached value
     try:
-        with open("/tmp/jarvis_workspace.txt", "r") as f:
-            runtime_path = f.read().strip()
-            if runtime_path and os.path.isdir(runtime_path):
-                ws_path = runtime_path
-                source = "runtime"
-    except:
+        with open(f"/tmp/vscars_ws_{current_user.id}.txt") as f:
+            ws = f.read().strip()
+        if ws:
+            return {"workspace": ws, "source": "cached", "exists": None}
+    except Exception:
         pass
-    
-    return {
-        "workspace": ws_path or os.path.expanduser("~"),
-        "source": source,
-        "exists": os.path.isdir(ws_path) if ws_path else True
-    }
+
+    return {"workspace": "~", "source": "default", "exists": None}
 
 # ==================== AI PROVIDER SETTINGS ROUTES ====================
 
@@ -2632,11 +2846,19 @@ async def machine_autodetect(
     if data.get("autodetect"):
         import json as _json
         machine.hostname = data.get("hostname", machine.hostname)
-        # Persist autodetect data in a new column if available, else piggyback on hostname
         try:
             machine.autodetect = _json.dumps(data.get("autodetect", {}))
         except Exception:
             pass
+        # Cache workspace server-side so ask_agent can resolve project_path
+        # even before the user explicitly sets it via the app.
+        workspace = data.get("autodetect", {}).get("workspace", "")
+        if workspace:
+            try:
+                with open(f"/tmp/vscars_ws_{current_user.id}.txt", "w") as _f:
+                    _f.write(workspace)
+            except Exception:
+                pass
     db.commit()
     return {"success": True}
 
@@ -2745,17 +2967,18 @@ async def agent_websocket(
 # ==================== COPILOT MODELS ROUTE ====================
 
 # Model catalogue — ordered cheapest → most capable within each tier
+# agents: which agent CLIs support this model (copilot=gh copilot, claude=claude CLI, codex=openai codex)
 _ALL_MODELS = [
-    {"id": "claude-haiku-4.5",      "label": "Claude Haiku 4.5",      "speed": "Fast",   "tier": "standard"},
-    {"id": "claude-sonnet-4.6",     "label": "Claude Sonnet 4.6",     "speed": "Balanced","tier": "standard"},
-    {"id": "gpt-4.1",               "label": "GPT-4.1",               "speed": "Balanced","tier": "standard"},
-    {"id": "gpt-5-mini",            "label": "GPT-5 Mini",            "speed": "Fast",   "tier": "standard"},
-    {"id": "gpt-5.2",               "label": "GPT-5.2",               "speed": "Smart",  "tier": "premium"},
-    {"id": "gpt-5.4",               "label": "GPT-5.4",               "speed": "Smart",  "tier": "premium"},
-    {"id": "gpt-5.3-codex",         "label": "GPT-5.3 Codex",         "speed": "Smart",  "tier": "premium"},
-    {"id": "claude-opus-4.6",       "label": "Claude Opus 4.6",       "speed": "Powerful","tier": "premium"},
-    {"id": "claude-opus-4.6-fast",  "label": "Claude Opus 4.6 Fast",  "speed": "Powerful","tier": "premium"},
-    {"id": "gemini-3-pro-preview",  "label": "Gemini 3 Pro",          "speed": "Smart",  "tier": "premium"},
+    {"id": "claude-haiku-4.5",      "label": "Claude Haiku 4.5",      "speed": "Fast",    "tier": "standard", "agents": ["copilot", "claude"]},
+    {"id": "claude-sonnet-4.6",     "label": "Claude Sonnet 4.6",     "speed": "Balanced", "tier": "standard", "agents": ["copilot", "claude"]},
+    {"id": "gpt-4.1",               "label": "GPT-4.1",               "speed": "Balanced", "tier": "standard", "agents": ["copilot", "codex"]},
+    {"id": "gpt-5-mini",            "label": "GPT-5 Mini",            "speed": "Fast",    "tier": "standard", "agents": ["copilot", "codex"]},
+    {"id": "gpt-5.2",               "label": "GPT-5.2",               "speed": "Smart",   "tier": "premium",  "agents": ["copilot", "codex"]},
+    {"id": "gpt-5.4",               "label": "GPT-5.4",               "speed": "Smart",   "tier": "premium",  "agents": ["copilot", "codex"]},
+    {"id": "gpt-5.3-codex",         "label": "GPT-5.3 Codex",         "speed": "Smart",   "tier": "premium",  "agents": ["codex"]},
+    {"id": "claude-opus-4.6",       "label": "Claude Opus 4.6",       "speed": "Powerful", "tier": "premium",  "agents": ["copilot", "claude"]},
+    {"id": "claude-opus-4.6-fast",  "label": "Claude Opus 4.6 Fast",  "speed": "Powerful", "tier": "premium",  "agents": ["claude"]},
+    {"id": "gemini-3-pro-preview",  "label": "Gemini 3 Pro",          "speed": "Smart",   "tier": "premium",  "agents": ["copilot"]},
 ]
 
 _PLAN_MODEL_IDS = {

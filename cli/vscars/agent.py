@@ -60,14 +60,31 @@ def _autodetect() -> dict:
 
     # Detect available agents/tools
     agents = []
-    for tool in ["claude", "gh", "git", "node", "python3", "python", "pip", "npm", "code"]:
+    for tool in ["claude", "copilot", "codex", "codex-cli", "gh", "git", "node", "python3", "python", "pip", "npm", "code"]:
         if shutil.which(tool):
             agents.append(tool)
+
+    # Check which AI agents are missing — flag for server so UI can prompt setup
+    missing_agents = []
+    if not shutil.which("claude"):
+        missing_agents.append("claude-code")
+    if not shutil.which("copilot"):
+        missing_agents.append("copilot-cli")
+    # Detect codex — check PATH first, then npx cache
+    import glob as _glob
+    codex_found = bool(shutil.which("codex") or shutil.which("codex-cli"))
+    if not codex_found:
+        npx_candidates = _glob.glob(os.path.expanduser("~/.npm/_npx/*/node_modules/@openai/codex-darwin-arm64/vendor/*/codex/codex"))
+        npx_candidates += _glob.glob(os.path.expanduser("~/.npm/_npx/*/node_modules/codex/bin/codex"))
+        codex_found = any(os.path.isfile(c) for c in npx_candidates)
+    if not codex_found:
+        missing_agents.append("codex-cli")
 
     return {
         "workspace": workspace,
         "git_repos": git_repos,
         "agents": agents,
+        "missing_agents": missing_agents,
         "cwd": os.getcwd(),
         "home": os.path.expanduser("~"),
     }
